@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/gorilla/websocket v1.5.3
-	github.com/terminalika/terminalika-core v0.0.0
+	github.com/terminalika/terminalika-core v0.1.0
 )
 
 require (
@@ -16,5 +16,3 @@ require (
 	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 )
-
-replace github.com/terminalika/terminalika-core => ../terminalika-core
