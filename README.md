@@ -5,6 +5,31 @@ Standalone CLI launcher for the Terminalika terminal games. It consumes the
 
 ## Install
 
+### Linux: direct downloads (.deb / .rpm)
+
+Every release ships prebuilt `.deb` and `.rpm` packages on the
+[releases page](https://github.com/terminalika/terminalika/releases) —
+install them directly, no repository or AUR needed:
+
+```sh
+# Debian / Ubuntu (amd64) — pick the latest version from the releases page
+wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika_0.3.2_amd64.deb
+sudo apt install ./terminalika_0.3.2_amd64.deb
+
+# Fedora / RHEL / openSUSE (x86_64)
+wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika-0.3.2-1.x86_64.rpm
+sudo dnf install ./terminalika-0.3.2-1.x86_64.rpm
+
+# Arch Linux — pacman installs the release's .pkg.tar.zst directly
+wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika-0.3.2-1-x86_64.pkg.tar.zst
+sudo pacman -U terminalika-0.3.2-1-x86_64.pkg.tar.zst
+```
+
+`arm64`/`aarch64` variants of every package are attached too, alongside raw
+binaries (`tar.gz` for Linux/macOS, `zip` for Windows).
+
+### Package managers
+
 ```sh
 # Homebrew (macOS/Linux)
 brew tap terminalika/tap && brew install --cask terminalika
@@ -12,18 +37,16 @@ brew tap terminalika/tap && brew install --cask terminalika
 # Scoop (Windows)
 scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
 scoop install terminalika
-
-# Arch Linux (AUR)
-paru -S terminalika    # or yay -S terminalika
-
-# build from source (Go 1.24+)
-go install github.com/terminalika/terminalika@latest
 ```
 
-Prebuilt binaries and `deb`/`rpm`/`apk` packages are attached to every
-[release](https://github.com/terminalika/terminalika/releases). See
-[RELEASING.md](RELEASING.md) for the release pipeline. On Windows you need
-Windows 10+ and a VT-capable terminal (Windows Terminal).
+### From source
+
+```sh
+go install github.com/terminalika/terminalika@latest   # Go 1.24+
+```
+
+On Windows you need Windows 10+ and a VT-capable terminal (Windows
+Terminal). See [RELEASING.md](RELEASING.md) for the release pipeline.
 
 ## Run
 
