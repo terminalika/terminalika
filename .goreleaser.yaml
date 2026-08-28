@@ -38,10 +38,10 @@ changelog:
       - '^chore:'
       - '^test:'
 
-# Homebrew formula pushed to github.com/terminalika/homebrew-tap
-# (`brew tap terminalika/tap && brew install terminalika`).
+# Homebrew cask pushed to github.com/terminalika/homebrew-tap
+# (`brew install --cask terminalika`).
 # NOTE: add `license: MIT` here (and a LICENSE file) once a license is chosen.
-brews:
+homebrew_casks:
   - name: terminalika
     repository:
       owner: terminalika
@@ -53,7 +53,7 @@ brews:
 # (`scoop bucket add terminalika https://github.com/terminalika/scoop-bucket`).
 scoops:
   - name: terminalika
-    bucket:
+    repository:
       owner: terminalika
       name: scoop-bucket
     homepage: https://github.com/terminalika/terminalika

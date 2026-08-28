@@ -7,7 +7,7 @@ Standalone CLI launcher for the Terminalika terminal games. It consumes the
 
 ```sh
 # Homebrew (macOS/Linux)
-brew tap terminalika/tap && brew install terminalika
+brew tap terminalika/tap && brew install --cask terminalika
 
 # Scoop (Windows)
 scoop bucket add terminalika https://github.com/terminalika/scoop-bucket

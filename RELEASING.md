@@ -57,7 +57,7 @@ Users then install with:
 
 ```sh
 # Homebrew (macOS/Linux)
-brew tap terminalika/tap && brew install terminalika
+brew tap terminalika/tap && brew install --cask terminalika
 
 # Scoop (Windows)
 scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
