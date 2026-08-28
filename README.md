@@ -5,9 +5,9 @@ Standalone CLI launcher for the Terminalika terminal games. It consumes the
 
 ## Install
 
-### Linux: direct downloads (.deb / .rpm)
+### Linux: direct downloads (.deb / .rpm / pkg.tar.zst)
 
-Every release ships prebuilt `.deb` and `.rpm` packages on the
+Every release ships prebuilt `.deb`, `.rpm` and `.pkg.tar.zst (for arch)` packages on the
 [releases page](https://github.com/terminalika/terminalika/releases) —
 install them directly, no repository or AUR needed:
 
