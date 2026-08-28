@@ -40,7 +40,6 @@ changelog:
 
 # Homebrew cask pushed to github.com/terminalika/homebrew-tap
 # (`brew install --cask terminalika`).
-# NOTE: add `license: MIT` here (and a LICENSE file) once a license is chosen.
 homebrew_casks:
   - name: terminalika
     repository:
@@ -48,6 +47,7 @@ homebrew_casks:
       name: homebrew-tap
     homepage: https://github.com/terminalika/terminalika
     description: Tiny terminal game launcher for AI-agent waiting time
+    license: MIT
 
 # Scoop manifest pushed to github.com/terminalika/scoop-bucket
 # (`scoop bucket add terminalika https://github.com/terminalika/scoop-bucket`).
@@ -58,6 +58,7 @@ scoops:
       name: scoop-bucket
     homepage: https://github.com/terminalika/terminalika
     description: Tiny terminal game launcher for AI-agent waiting time
+    license: MIT
 
 # deb/rpm/apk packages attached to the GitHub release.
 nfpms:
@@ -67,6 +68,7 @@ nfpms:
     homepage: https://github.com/terminalika/terminalika
     description: Tiny terminal game launcher for AI-agent waiting time
     maintainer: Terminalika
+    license: MIT
     formats:
       - deb
       - rpm

@@ -14,8 +14,8 @@ changes.
    `TAP_GITHUB_TOKEN` secret in `terminalika/terminalika` (Settings →
    Secrets and variables → Actions). The default `GITHUB_TOKEN` cannot push to
    the tap/bucket repos.
-4. Add a `LICENSE` file to both repos and set `license:` in
-   `.goreleaser.yaml` (see the comments there).
+4. License: both repos carry a MIT `LICENSE` file; `.goreleaser.yaml` sets
+   `license: MIT` for the cask, scoop manifest and nfpm packages.
 
 ## Releasing a new core version
 
