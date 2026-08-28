@@ -10,15 +10,71 @@ import (
 )
 
 func TestSessionDirName(t *testing.T) {
+	// sessionDirName must encode the absolute, cleaned path on every platform.
+	root := t.TempDir()
+	dir := filepath.Join(root, "proj")
+	want := encodeSessionDir(filepath.Clean(dir))
+
+	if got := sessionDirName(dir); got != want {
+		t.Errorf("sessionDirName(%q) = %q, want %q", dir, got, want)
+	}
+
+	// Trailing separators must be cleaned away before encoding.
+	if got := sessionDirName(dir + string(filepath.Separator)); got != want {
+		t.Errorf("sessionDirName(%q) = %q, want %q", dir+string(filepath.Separator), got, want)
+	}
+}
+
+func TestEncodeSessionDir(t *testing.T) {
 	cases := map[string]string{
-		"/home/hyvin/terminalika":  "--home-hyvin-terminalika--",
-		"/home/hyvin/terminalika/": "--home-hyvin-terminalika--",
-		"/":                        "----",
-		"rel/path":                 "--rel-path--",
+		"/home/user/proj": "--home-user-proj--",
+		"/":               "----",
+		`C:\Users\x\proj`: "--C--Users-x-proj--",
+		`C:/Users/x/proj`: "--C--Users-x-proj--",
+		`\home\x`:          "--home-x--",
 	}
 	for in, want := range cases {
-		if got := sessionDirName(in); got != want {
-			t.Errorf("sessionDirName(%q) = %q, want %q", in, got, want)
+		if got := encodeSessionDir(in); got != want {
+			t.Errorf("encodeSessionDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSessionsRootEnvOverrides(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+
+	// Explicit session dir wins.
+	sessions := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessions)
+	if got := sessionsRoot(); got != sessions {
+		t.Errorf("sessionsRoot() = %q, want %q", got, sessions)
+	}
+
+	// Agent dir maps to <dir>/sessions.
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", "")
+	agent := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", agent)
+	if got := sessionsRoot(); got != filepath.Join(agent, "sessions") {
+		t.Errorf("sessionsRoot() = %q, want %q", got, filepath.Join(agent, "sessions"))
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home dir")
+	}
+	cases := map[string]string{
+		"~":       home,
+		"~/foo":   filepath.Join(home, "foo"),
+		"~\\foo":  filepath.Join(home, "foo"),
+		"/abs/x":  "/abs/x",
+		"no/tilde": "no/tilde",
+	}
+	for in, want := range cases {
+		if got := expandHome(in); got != want {
+			t.Errorf("expandHome(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -49,7 +105,7 @@ func TestSettledEvent(t *testing.T) {
 
 func TestResolveScope(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("PI_SESSIONS_DIR", root)
+	t.Setenv("PI_CODING_AGENT_SESSION_DIR", root)
 
 	// Default: every session under the sessions root, recursively.
 	got := ResolveScope(Options{})

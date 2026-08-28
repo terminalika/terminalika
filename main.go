@@ -25,11 +25,21 @@ import (
 
 const wsPortTries = 100
 
+// version is overridden at release time via
+// -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
+
 func main() {
 	gameFlag := flag.String("game", "", "skip the menu and launch a game directly (snake or tetris)")
 	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for events/commands (empty disables)")
 	piFlag := flag.Bool("pi", false, "subscribe to the latest pi session and pause the game when the agent settles")
+	versionFlag := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {

@@ -1,0 +1,73 @@
+version: 2
+
+project_name: terminalika
+
+builds:
+  - id: terminalika
+    main: .
+    binary: terminalika
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^test:'
+
+# Homebrew formula pushed to github.com/terminalika/homebrew-tap
+# (`brew tap terminalika/tap && brew install terminalika`).
+# NOTE: add `license: MIT` here (and a LICENSE file) once a license is chosen.
+brews:
+  - name: terminalika
+    repository:
+      owner: terminalika
+      name: homebrew-tap
+    homepage: https://github.com/terminalika/terminalika
+    description: Tiny terminal game launcher for AI-agent waiting time
+
+# Scoop manifest pushed to github.com/terminalika/scoop-bucket
+# (`scoop bucket add terminalika https://github.com/terminalika/scoop-bucket`).
+scoops:
+  - name: terminalika
+    bucket:
+      owner: terminalika
+      name: scoop-bucket
+    homepage: https://github.com/terminalika/terminalika
+    description: Tiny terminal game launcher for AI-agent waiting time
+
+# deb/rpm/apk packages attached to the GitHub release.
+nfpms:
+  - id: default
+    package_name: terminalika
+    file_name_template: "{{ .ConventionalFileName }}"
+    homepage: https://github.com/terminalika/terminalika
+    description: Tiny terminal game launcher for AI-agent waiting time
+    maintainer: Terminalika
+    formats:
+      - deb
+      - rpm
+      - apk

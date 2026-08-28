@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 )
 
 // Info is the WebSocket sidecar's published address, written to ws.json so
@@ -81,7 +80,7 @@ func AcquireLock(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockFile(f); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("another terminalika instance is already running (lock %s)", path)
 	}
@@ -94,7 +93,7 @@ func AcquireLock(path string) (func(), error) {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			_ = unlockFile(f)
 			_ = f.Close()
 		})
 	}, nil

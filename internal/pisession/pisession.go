@@ -38,11 +38,17 @@ type Scope struct {
 	Recursive bool
 }
 
-// sessionsRoot returns the directory pi stores sessions in. PI_SESSIONS_DIR
-// overrides it for tests and custom setups.
+// sessionsRoot returns the directory pi stores sessions in. It mirrors pi's
+// own resolution order (see pi's config.js): PI_CODING_AGENT_SESSION_DIR
+// points straight at the sessions dir, PI_CODING_AGENT_DIR moves the whole
+// agent dir (sessions live in <dir>/sessions), and otherwise sessions live
+// under ~/.pi/agent/sessions.
 func sessionsRoot() string {
-	if d := os.Getenv("PI_SESSIONS_DIR"); d != "" {
-		return d
+	if d := os.Getenv("PI_CODING_AGENT_SESSION_DIR"); d != "" {
+		return expandHome(d)
+	}
+	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
+		return filepath.Join(expandHome(d), "sessions")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -51,13 +57,46 @@ func sessionsRoot() string {
 	return filepath.Join(home, ".pi", "agent", "sessions")
 }
 
+// expandHome expands a leading "~", "~/" or "~\\" the way pi's normalizePath
+// does, so env-var values like PI_CODING_AGENT_DIR=~/foo resolve correctly.
+func expandHome(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return home
+		}
+		return path
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 // sessionDirName converts a project directory into pi's session subdirectory
-// name: "/home/user/proj" -> "--home-user-proj--".
+// name. It resolves the path to an absolute form first (pi uses path.resolve),
+// then applies pi's exact encoding (see session-manager.js): strip one leading
+// '/' or '\\', then replace every '/', '\\' and ':' (the Windows drive letter)
+// with '-'.
+//
+//	"/home/user/proj"  -> "--home-user-proj--"
+//	"C:\\Users\\x\\proj" -> "--C-Users-x-proj--"
 func sessionDirName(dir string) string {
-	dir = filepath.Clean(dir)
-	dir = strings.TrimPrefix(dir, string(filepath.Separator))
-	dir = strings.ReplaceAll(dir, string(filepath.Separator), "-")
-	return "--" + dir + "--"
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = filepath.Clean(dir)
+	}
+	return encodeSessionDir(abs)
+}
+
+// encodeSessionDir applies pi's session-directory encoding to an already
+// resolved path: strip one leading '/' or '\\', then replace every '/', '\\'
+// and ':' with '-'.
+func encodeSessionDir(dir string) string {
+	dir = strings.TrimPrefix(dir, "/")
+	dir = strings.TrimPrefix(dir, "\\")
+	return "--" + strings.NewReplacer("/", "-", "\\", "-", ":", "-").Replace(dir) + "--"
 }
 
 // ResolveScope maps the options to a watch scope:

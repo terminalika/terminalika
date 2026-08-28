@@ -3,6 +3,25 @@
 Standalone CLI launcher for the Terminalika terminal games. It consumes the
 [`terminalika-core`](https://github.com/terminalika/terminalika-core) library.
 
+## Install
+
+```sh
+# Homebrew (macOS/Linux)
+brew tap terminalika/tap && brew install terminalika
+
+# Scoop (Windows)
+scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
+scoop install terminalika
+
+# build from source (Go 1.24+)
+go install github.com/terminalika/terminalika@latest
+```
+
+Prebuilt binaries and `deb`/`rpm`/`apk` packages are attached to every
+[release](https://github.com/terminalika/terminalika/releases). See
+[RELEASING.md](RELEASING.md) for the release pipeline. On Windows you need
+Windows 10+ and a VT-capable terminal (Windows Terminal).
+
 ## Run
 
 ```sh
@@ -18,14 +37,16 @@ go run . --game=snake --ws=127.0.0.1:8080
 ```
 
 Only **one terminalika instance** can run per machine: a second launch prints
-an error and exits (the lock lives in `~/.config/terminalika/instance.lock` and
-is released automatically when the process exits).
+an error and exits. The lock lives in `instance.lock` in the user config dir
+(`~/.config/terminalika` on Linux, `~/Library/Application Support/terminalika`
+on macOS, `%AppData%\terminalika` on Windows) and is released automatically
+when the process exits (`flock` on Unix, `LockFileEx` on Windows).
 
 The sidecar binds to the `-ws` base address. If that port is already taken
 (e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port
-is found. The resolved address is written to
-`~/.config/terminalika/ws.json` (never printed to the terminal, which is in
-fullscreen/raw mode while a game runs):
+is found. The resolved address is written to `ws.json` in the user config dir
+(never printed to the terminal, which is in fullscreen/raw mode while a game
+runs):
 
 ```json
 {"game":"snake","addr":"127.0.0.1:8081","url":"ws://127.0.0.1:8081"}
@@ -59,7 +80,13 @@ correlation id. Spontaneous events (keyboard/timer driven) carry no
 
 The launcher can subscribe to pi sessions and pause the game when the agent
 settles. Pi appends entries to its session files live, so terminalika tails
-them — no separate bridge process and no pi server mode needed.
+them — no separate bridge process and no pi server mode needed. It works on
+Linux, macOS and Windows.
+
+The session directory follows pi's own resolution: `~/.pi/agent/sessions` by
+default, `PI_CODING_AGENT_SESSION_DIR` overrides it directly, and
+`PI_CODING_AGENT_DIR` moves the whole agent dir (sessions then live in
+`<dir>/sessions`).
 
 By default **any** session of **any** running pi triggers the pause. To
 restrict it, set `dir` or `session` in the config.
@@ -120,7 +147,7 @@ go work init ./terminalika ./terminalika-core
 The generated `go.work` looks like this (and is local-only, don't commit it):
 
 ```
-go 1.26.5
+go 1.24.0
 
 use (
 	./terminalika
@@ -131,7 +158,8 @@ use (
 From now on, `cd terminalika && go build ./...` uses the sibling
 `terminalika-core` checkout instead of the published version.
 
-The repos are private, so tell Go to fetch them directly over SSH and skip the
+The repos are public, so `go get` / `go install` work out of the box. For
+local development over SSH, configure Go to fetch them directly and skip the
 public module proxy:
 
 ```sh
