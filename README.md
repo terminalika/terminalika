@@ -17,6 +17,10 @@ go run . --game=tetris
 go run . --game=snake --ws=127.0.0.1:8080
 ```
 
+Only **one terminalika instance** can run per machine: a second launch prints
+an error and exits (the lock lives in `~/.config/terminalika/instance.lock` and
+is released automatically when the process exits).
+
 The sidecar binds to the `-ws` base address. If that port is already taken
 (e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port
 is found. The resolved address is written to
@@ -50,6 +54,53 @@ Server → client:
 Commands that fail produce a `command.rejected` event carrying the command's
 correlation id. Spontaneous events (keyboard/timer driven) carry no
 `correlation_id`.
+
+## pi subscription
+
+The launcher can subscribe to pi sessions and pause the game when the agent
+settles. Pi appends entries to its session files live, so terminalika tails
+them — no separate bridge process and no pi server mode needed.
+
+By default **any** session of **any** running pi triggers the pause. To
+restrict it, set `dir` or `session` in the config.
+
+Enable it with the `-pi` flag or in `~/.config/terminalika/config.json`:
+
+```sh
+# enable via flag
+go run . --game=snake -pi
+
+# or via config (either one is enough)
+cat > ~/.config/terminalika/config.json <<'EOF'
+{"pi":{"subscribe":true}}
+EOF
+go run . --game=snake
+```
+
+Config fields under `pi`:
+
+- `subscribe` (bool): enable the subscription (OR-ed with `-pi`).
+- `dir` (string, optional): restrict to sessions of the pi running in this
+  project directory. Unset = every project.
+- `session` (string, optional): explicit session file path; overrides `dir`.
+
+```jsonc
+// example: only react to pi running in this one directory
+{"pi": {"subscribe": true, "dir": "/home/me/my-project"}}
+```
+
+Event watched: a new assistant message with a terminal `stopReason` (e.g.
+`stop`) → `<game>.pause`. Assistant messages that are still calling tools
+(`stopReason: "toolUse"`) are ignored. Only entries appended after the game
+starts count; existing history is skipped.
+
+The pause command is sent with a `reason` payload, so the game's pause overlay
+reads `Paused by PI`. The `snake.pause` / `tetris.pause` commands also accept
+an optional `reason` field for any other client:
+
+```json
+{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused by PI"}}
+```
 
 ## Local development
 

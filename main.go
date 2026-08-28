@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -17,8 +15,11 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/terminalika/terminalika/internal/config"
 	"github.com/terminalika/terminalika/internal/engine"
 	"github.com/terminalika/terminalika/internal/menu"
+	"github.com/terminalika/terminalika/internal/pisession"
+	"github.com/terminalika/terminalika/internal/sidecar"
 	"github.com/terminalika/terminalika/internal/wsserver"
 )
 
@@ -27,7 +28,27 @@ const wsPortTries = 100
 func main() {
 	gameFlag := flag.String("game", "", "skip the menu and launch a game directly (snake or tetris)")
 	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for events/commands (empty disables)")
+	piFlag := flag.Bool("pi", false, "subscribe to the latest pi session and pause the game when the agent settles")
 	flag.Parse()
+
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
+	}
+	pi := piWatch{
+		enabled: *piFlag || cfg.PI.Subscribe,
+		dir:     cfg.PI.Dir,
+		session: cfg.PI.Session,
+	}
+
+	// Single instance: only one terminalika process may run per machine. This
+	// runs before the terminal goes raw, so the error is visible on screen.
+	release, err := sidecar.AcquireLock(sidecar.LockPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer release()
 
 	registry := games.Default()
 
@@ -50,7 +71,7 @@ func main() {
 	defer screen.Fini()
 
 	if *gameFlag != "" {
-		runGame(screen, registry, *gameFlag, *wsFlag)
+		runGame(screen, registry, *gameFlag, *wsFlag, pi)
 		return
 	}
 
@@ -60,42 +81,16 @@ func main() {
 		if !ok {
 			return
 		}
-		runGame(screen, registry, name, *wsFlag)
+		runGame(screen, registry, name, *wsFlag, pi)
 	}
 }
 
-// wsInfo is written to a file so external tools can discover the sidecar's
-// address. The terminal is in raw/fullscreen mode while the game runs, so we
-// never print to it; the file is the single source of truth.
-type wsInfo struct {
-	Game  string `json:"game"`
-	Addr  string `json:"addr,omitempty"`
-	URL   string `json:"url,omitempty"`
-	Error string `json:"error,omitempty"`
-}
-
-func wsInfoPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil || dir == "" {
-		dir = os.TempDir()
-	}
-	return filepath.Join(dir, "terminalika", "ws.json")
-}
-
-func writeWSInfo(info wsInfo) {
-	path := wsInfoPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	data, err := json.Marshal(info)
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0o644)
-}
-
-func removeWSInfo() {
-	_ = os.Remove(wsInfoPath())
+// piWatch is the resolved pi subscription configuration: the -pi flag and the
+// config file are OR-ed together.
+type piWatch struct {
+	enabled bool
+	dir     string
+	session string
 }
 
 // resolveWSAddr binds a TCP listener for the sidecar. It starts at the base
@@ -124,7 +119,7 @@ func resolveWSAddr(base string, tries int) (net.Listener, string, error) {
 	return nil, "", fmt.Errorf("no free port starting at %s after %d tries: %w", base, tries, lastErr)
 }
 
-func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string) {
+func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string, pi piWatch) {
 	game, ok := registry.Get(name)
 	if !ok {
 		return
@@ -132,26 +127,29 @@ func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string) 
 
 	eng := engine.New(screen, game)
 
+	stopPi := startPiWatch(name, eng, pi)
+	defer stopPi()
+
 	// Optional WebSocket sidecar: terminal stays in charge, remote clients can
 	// observe events and send commands.
 	var ws *wsserver.Server
 	var srv *http.Server
 
 	if wsAddr == "" {
-		writeWSInfo(wsInfo{Game: name, Error: "disabled"})
+		_ = sidecar.WriteInfo(sidecar.Info{Game: name, Error: "disabled"})
 	} else {
 		ln, addr, err := resolveWSAddr(wsAddr, wsPortTries)
 		if err != nil {
-			writeWSInfo(wsInfo{Game: name, Error: err.Error()})
+			_ = sidecar.WriteInfo(sidecar.Info{Game: name, Error: err.Error()})
 		} else {
 			ws = wsserver.New(eng)
 			srv = &http.Server{Handler: ws}
 			go func() {
 				if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-					writeWSInfo(wsInfo{Game: name, Error: err.Error()})
+					_ = sidecar.WriteInfo(sidecar.Info{Game: name, Error: err.Error()})
 				}
 			}()
-			writeWSInfo(wsInfo{Game: name, Addr: addr, URL: "ws://" + addr})
+			_ = sidecar.WriteInfo(sidecar.Info{Game: name, Addr: addr, URL: "ws://" + addr})
 		}
 	}
 
@@ -164,5 +162,25 @@ func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string) 
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	}
-	removeWSInfo()
+	sidecar.RemoveInfo()
+}
+
+// startPiWatch subscribes the game to the latest pi session: when the agent
+// settles, the game is paused. It returns a stop function that cancels the
+// watcher. When the subscription is disabled or no session can be found it
+// returns a no-op stop.
+func startPiWatch(game string, eng *engine.Engine, pi piWatch) func() {
+	if !pi.enabled {
+		return func() {}
+	}
+	scope := pisession.ResolveScope(pisession.Options{Dir: pi.dir, Session: pi.session})
+	ctx, cancel := context.WithCancel(context.Background())
+	w := pisession.NewWatcher(scope, func() {
+		eng.SendCommand(core.Command{
+			Type:    game + ".pause",
+			Payload: core.MustJSON(map[string]string{"reason": "Paused by PI"}),
+		})
+	})
+	go w.Run(ctx)
+	return cancel
 }

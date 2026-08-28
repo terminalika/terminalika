@@ -176,6 +176,19 @@ func (e *Engine) handleKey(ev *tcell.EventKey) {
 }
 
 func (e *Engine) togglePause() {
+	// Prefer the game's real pause state so that pauses triggered by external
+	// commands (WebSocket, pi subscription) are picked up and a single SPACE
+	// resumes them.
+	if ps, ok := e.game.(core.PauseState); ok {
+		if ps.IsPaused() {
+			e.game.Resume()
+			return
+		}
+		e.game.Pause()
+		return
+	}
+
+	// Fallback for games that do not report their pause state.
 	if e.paused {
 		e.paused = false
 		e.game.Resume()

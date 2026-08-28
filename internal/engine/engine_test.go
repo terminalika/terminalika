@@ -21,6 +21,37 @@ func (f *fakeGame) Resume()                          { f.resumeCalls++ }
 func (f *fakeGame) Reset()                           { f.resetCalls++ }
 func (f *fakeGame) HandleInput(*tcell.EventKey) bool { f.inputCalls++; return true }
 
+// pausableGame implements core.PauseState so the engine can consult the
+// game's real pause state instead of its own cached flag.
+type pausableGame struct {
+	fakeGame
+	paused bool
+}
+
+func (p *pausableGame) Pause()         { p.paused = true; p.pauseCalls++ }
+func (p *pausableGame) Resume()        { p.paused = false; p.resumeCalls++ }
+func (p *pausableGame) IsPaused() bool { return p.paused }
+
+func TestSpaceResumesExternallyPausedGame(t *testing.T) {
+	p := &pausableGame{}
+	e := New(nil, p)
+
+	// Simulate an external pause (e.g. the pi subscription's <game>.pause
+	// command) that did not go through the engine's SPACE toggle.
+	p.paused = true
+
+	e.handleKey(tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone))
+	if p.paused {
+		t.Fatal("SPACE should resume the externally paused game")
+	}
+	if p.resumeCalls != 1 {
+		t.Fatalf("resume calls = %d, want 1", p.resumeCalls)
+	}
+	if p.pauseCalls != 0 {
+		t.Fatalf("pause calls = %d, want 0", p.pauseCalls)
+	}
+}
+
 func TestGlobalKeysAreIntercepted(t *testing.T) {
 	f := &fakeGame{}
 	e := New(nil, f)

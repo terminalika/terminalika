@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/gorilla/websocket v1.5.3
-	github.com/terminalika/terminalika-core v0.1.0
+	github.com/terminalika/terminalika-core v0.2.0
 )
 
 require (
