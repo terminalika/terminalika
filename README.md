@@ -9,7 +9,7 @@ Standalone CLI launcher for the Terminalika terminal games. It consumes the
 
 Every release ships prebuilt `.deb`, `.rpm` and `.pkg.tar.zst (for arch)` packages on the
 [releases page](https://github.com/terminalika/terminalika/releases) —
-install them directly, no repository or AUR needed:
+install them directly
 
 ```sh
 # Debian / Ubuntu (amd64) — pick the latest version from the releases page
@@ -28,7 +28,7 @@ sudo pacman -U terminalika-0.3.2-1-x86_64.pkg.tar.zst
 `arm64`/`aarch64` variants of every package are attached too, alongside raw
 binaries (`tar.gz` for Linux/macOS, `zip` for Windows).
 
-### Package managers
+### Windows and MacOS
 
 ```sh
 # Homebrew (macOS/Linux)
