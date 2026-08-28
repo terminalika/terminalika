@@ -13,6 +13,9 @@ brew tap terminalika/tap && brew install --cask terminalika
 scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
 scoop install terminalika
 
+# Arch Linux (AUR)
+paru -S terminalika    # or yay -S terminalika
+
 # build from source (Go 1.24+)
 go install github.com/terminalika/terminalika@latest
 ```

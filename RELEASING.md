@@ -49,8 +49,9 @@ Pushing the tag triggers `.github/workflows/release.yml`, which runs
 goreleaser and:
 
 - builds static binaries for `linux`/`darwin`/`windows` × `amd64`/`arm64`,
-- attaches them (plus `deb`/`rpm`/`apk`) to the GitHub release,
-- pushes a Homebrew formula to `terminalika/homebrew-tap`,
+- attaches them (plus `deb`/`rpm`/`apk`/`archlinux` packages) to the GitHub
+  release,
+- pushes a Homebrew cask to `terminalika/homebrew-tap`,
 - pushes a Scoop manifest to `terminalika/scoop-bucket`.
 
 Users then install with:
@@ -63,7 +64,49 @@ brew tap terminalika/tap && brew install --cask terminalika
 scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
 scoop install terminalika
 
+# Arch Linux: build from source via AUR, or install the .pkg.tar.zst from
+# the GitHub release directly
+pacman -U terminalika-<version>-1-<arch>.pkg.tar.zst
+
 # or download a binary from the GitHub release page
+```
+
+## Arch Linux (AUR)
+
+The package sources live in `packaging/aur/` (`PKGBUILD` + `.SRCINFO`). To
+publish them to the AUR you need an [Arch Linux account](https://aur.archlinux.org)
+with an SSH key registered, then:
+
+```sh
+cd packaging/aur
+# build + verify locally
+makepkg -f
+makepkg --printsrcinfo > .SRCINFO   # keep in sync after PKGBUILD edits
+
+# one-time: clone the AUR package repo (needs your SSH key)
+git clone ssh://aur@aur.archlinux.org/terminalika.git
+cp PKGBUILD .SRCINFO terminalika/
+cd terminalika
+# bump pkgver / sha256sums for each new release (see below), then:
+git add PKGBUILD .SRCINFO
+git commit -m "Update to vX.Y.Z"
+git push origin master   # AUR uses master
+```
+
+After a new launcher release, update `pkgver` and the `sha256sums` entry:
+
+```sh
+cd packaging/aur
+curl -sL -o /tmp/t.tar.gz https://github.com/terminalika/terminalika/archive/vX.Y.Z.tar.gz
+sha256sum /tmp/t.tar.gz
+# paste the hash into PKGBUILD, bump pkgver, then:
+makepkg --printsrcinfo > .SRCINFO
+```
+
+Arch users install with any AUR helper:
+
+```sh
+paru -S terminalika   # or yay -S terminalika
 ```
 
 > The `go` directive lives at `1.24.0` because `tcell v2.13.10` requires it.

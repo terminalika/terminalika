@@ -71,3 +71,4 @@ nfpms:
       - deb
       - rpm
       - apk
+      - archlinux

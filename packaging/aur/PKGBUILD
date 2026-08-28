@@ -1,0 +1,35 @@
+# Maintainer: 2O77 <recepahmetkara@gmail.com>
+# Contributor: Terminalika
+
+pkgname=terminalika
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Tiny terminal game launcher for AI-agent waiting time"
+arch=('x86_64' 'aarch64')
+url="https://github.com/terminalika/terminalika"
+license=('custom')
+# TODO: pick a license (e.g. MIT) and add a LICENSE file to the repo, then
+# update the license= line above and uncomment the LICENSE install below.
+depends=()
+makedepends=('go')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/terminalika/terminalika/archive/v$pkgver.tar.gz")
+sha256sums=('a13ba88adcd8ee5e85a2b66bb9f397818036d78c23b27274460897c95f37465d')
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  export CGO_ENABLED=0
+  # The build must not pick up a parent go.work (e.g. when makepkg runs
+  # inside a checkout that is part of a Go workspace).
+  export GOWORK=off
+  go build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X main.version=$pkgver" \
+    -o "$pkgname" .
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  install -Dm755 "$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  # Uncomment once a LICENSE file exists in the repo:
+  # install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

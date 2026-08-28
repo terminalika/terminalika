@@ -1,3 +1,11 @@
 /terminalika
 terminalika
 *.exe
+
+dist/
+
+# local makepkg test artifacts (packaging/aur)
+packaging/aur/src/
+packaging/aur/pkg/
+packaging/aur/*.pkg.tar.zst
+packaging/aur/*.tar.gz
