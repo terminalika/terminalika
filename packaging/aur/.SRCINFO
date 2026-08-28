@@ -1,13 +1,13 @@
 pkgbase = terminalika
 	pkgdesc = Tiny terminal game launcher for AI-agent waiting time
-	pkgver = 0.3.1
+	pkgver = 0.3.2
 	pkgrel = 1
 	url = https://github.com/terminalika/terminalika
 	arch = x86_64
 	arch = aarch64
 	license = MIT
 	makedepends = go
-	source = terminalika-0.3.1.tar.gz::https://github.com/terminalika/terminalika/archive/v0.3.1.tar.gz
-	sha256sums = 135ef51c4260925bd8689d81ef448d5a47b8ad7646dd0742d919929afeef497d
+	source = terminalika-0.3.2.tar.gz::https://github.com/terminalika/terminalika/archive/v0.3.2.tar.gz
+	sha256sums = 9431591f066e4a0d922007fe7edf2702a8c2943becd37c889bd05512fa44e0f4
 
 pkgname = terminalika

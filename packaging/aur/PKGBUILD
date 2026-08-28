@@ -2,7 +2,7 @@
 # Contributor: Terminalika
 
 pkgname=terminalika
-pkgver=0.3.1
+pkgver=0.3.2
 pkgrel=1
 pkgdesc="Tiny terminal game launcher for AI-agent waiting time"
 arch=('x86_64' 'aarch64')
@@ -11,7 +11,7 @@ license=('MIT')
 depends=()
 makedepends=('go')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/terminalika/terminalika/archive/v$pkgver.tar.gz")
-sha256sums=('135ef51c4260925bd8689d81ef448d5a47b8ad7646dd0742d919929afeef497d')
+sha256sums=('9431591f066e4a0d922007fe7edf2702a8c2943becd37c889bd05512fa44e0f4')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -27,7 +27,6 @@ build() {
 package() {
   cd "$srcdir/$pkgname-$pkgver"
   install -Dm755 "$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
-  # Active from v0.3.2 (the first tag whose tarball contains LICENSE):
-  # install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
