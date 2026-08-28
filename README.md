@@ -17,6 +17,16 @@ go run . --game=tetris
 go run . --game=snake --ws=127.0.0.1:8080
 ```
 
+The sidecar binds to the `-ws` base address. If that port is already taken
+(e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port
+is found. The resolved address is written to
+`~/.config/terminalika/ws.json` (never printed to the terminal, which is in
+fullscreen/raw mode while a game runs):
+
+```json
+{"game":"snake","addr":"127.0.0.1:8081","url":"ws://127.0.0.1:8081"}
+```
+
 ### WebSocket protocol
 
 Connect to `/` on the `-ws` address. Both directions use JSON text frames with
