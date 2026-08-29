@@ -32,3 +32,20 @@ jobs:
           # here. Create the secret as TAP_GITHUB_TOKEN in this repo's
           # Settings > Secrets and variables > Actions.
           GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+  rebuild-website:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      # The docs site fetches "latest release" from the GitHub API at build
+      # time (see website/src/lib/version.ts), so a fresh build is all it
+      # needs to pick up this release - no doc edit, no website-repo commit.
+      # Reuses TAP_GITHUB_TOKEN (see the goreleaser step above) since the
+      # default GITHUB_TOKEN can't dispatch workflows on another repository.
+      - name: Trigger website rebuild
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${{ secrets.TAP_GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/terminalika/website/actions/workflows/deploy.yml/dispatches \
+            -d '{"ref":"main"}'

@@ -12,21 +12,24 @@ Every release ships prebuilt `.deb`, `.rpm` and `.pkg.tar.zst (for arch)` packag
 install them directly
 
 ```sh
-# Debian / Ubuntu (amd64) — pick the latest version from the releases page
-wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika_0.3.2_amd64.deb
-sudo apt install ./terminalika_0.3.2_amd64.deb
+# Debian / Ubuntu (amd64)
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.deb
+sudo apt install ./terminalika_amd64.deb
 
-# Fedora / RHEL / openSUSE (x86_64)
-wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika-0.3.2-1.x86_64.rpm
-sudo dnf install ./terminalika-0.3.2-1.x86_64.rpm
+# Fedora / RHEL / openSUSE (amd64)
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.rpm
+sudo dnf install ./terminalika_amd64.rpm
 
 # Arch Linux — pacman installs the release's .pkg.tar.zst directly
-wget https://github.com/terminalika/terminalika/releases/download/v0.3.2/terminalika-0.3.2-1-x86_64.pkg.tar.zst
-sudo pacman -U terminalika-0.3.2-1-x86_64.pkg.tar.zst
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.pkg.tar.zst
+sudo pacman -U terminalika_amd64.pkg.tar.zst
 ```
 
-`arm64`/`aarch64` variants of every package are attached too, alongside raw
-binaries (`tar.gz` for Linux/macOS, `zip` for Windows).
+Every file name uses `amd64`/`arm64`, not each distro's native `x86_64`/
+`aarch64` spelling — the package managers read the real architecture from
+the package metadata, not the file name, so this is cosmetic only. `arm64`
+variants of every package are attached too, alongside raw binaries
+(`tar.gz` for Linux/macOS, `zip` for Windows).
 
 ### Windows and MacOS
 

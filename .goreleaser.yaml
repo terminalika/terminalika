@@ -20,6 +20,9 @@ builds:
 
 archives:
   - id: default
+    # No version in the name: docs link straight at
+    # releases/latest/download/<name> and never go stale.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     format_overrides:
@@ -64,7 +67,12 @@ scoops:
 nfpms:
   - id: default
     package_name: terminalika
-    file_name_template: "{{ .ConventionalFileName }}"
+    # No version in the name (same reasoning as archives above): keeps
+    # releases/latest/download/<name> links working across every release.
+    # .ConventionalExtension already carries its own leading dot (".deb",
+    # ".pkg.tar.zst", ...) and .Arch is the plain "amd64"/"arm64" pair for
+    # every format here, not each distro's native arch spelling.
+    file_name_template: "{{ .PackageName }}_{{ .Arch }}{{ .ConventionalExtension }}"
     homepage: https://github.com/terminalika/terminalika
     description: Tiny terminal game launcher for AI-agent waiting time
     maintainer: Terminalika

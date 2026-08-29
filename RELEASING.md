@@ -52,7 +52,10 @@ goreleaser and:
 - attaches them (plus `deb`/`rpm`/`apk`/`archlinux` packages) to the GitHub
   release,
 - pushes a Homebrew cask to `terminalika/homebrew-tap`,
-- pushes a Scoop manifest to `terminalika/scoop-bucket`.
+- pushes a Scoop manifest to `terminalika/scoop-bucket`,
+- triggers a rebuild of `terminalika/website`, which picks up this release as
+  "latest" at build time (`website/src/lib/version.ts`) — nothing to edit
+  there by hand.
 
 Users then install with:
 
@@ -65,21 +68,31 @@ scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
 scoop install terminalika
 
 # Debian / Ubuntu — direct .deb download (no repository needed)
-wget https://github.com/terminalika/terminalika/releases/download/vX.Y.Z/terminalika_X.Y.Z_amd64.deb
-sudo apt install ./terminalika_X.Y.Z_amd64.deb
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.deb
+sudo apt install ./terminalika_amd64.deb
 
 # Fedora / RHEL — direct .rpm download
-wget https://github.com/terminalika/terminalika/releases/download/vX.Y.Z/terminalika-X.Y.Z-1.x86_64.rpm
-sudo dnf install ./terminalika-X.Y.Z-1.x86_64.rpm
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.rpm
+sudo dnf install ./terminalika_amd64.rpm
 
 # Arch — pacman installs the release's .pkg.tar.zst directly
-sudo pacman -U terminalika-X.Y.Z-1-x86_64.pkg.tar.zst
+wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.pkg.tar.zst
+sudo pacman -U terminalika_amd64.pkg.tar.zst
 
 # or download a binary from the GitHub release page
 ```
 
 > The AUR is not used: it is closed to new packages, and the `.deb`/`.rpm`/
 > `.pkg.tar.zst` downloads above cover every Linux distro directly.
+
+> `archives.name_template` and `nfpms.file_name_template` in
+> `.goreleaser.yaml` deliberately omit the version, so every asset name above
+> is stable across releases and `releases/latest/download/<name>` always
+> resolves — nothing here or in the website needs editing after a release.
+> Every file name also uses the plain `amd64`/`arm64` pair for every
+> format, not each distro's native `x86_64`/`aarch64` spelling — cosmetic
+> only, package managers read the real architecture from the package
+> metadata.
 
 > The `go` directive lives at `1.24.0` because `tcell v2.13.10` requires it.
 > Do not raise it above what a current stable Go release provides, or CI and
