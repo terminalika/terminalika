@@ -37,15 +37,17 @@ jobs:
     needs: goreleaser
     runs-on: ubuntu-latest
     steps:
+      # terminalika.dev is served by Cloudflare Pages (its own git
+      # integration builds on every push to the website repo's main - no
+      # GitHub Actions involved there). Pushing a tag here doesn't touch
+      # that repo, so nothing would rebuild it on its own; a Cloudflare
+      # Pages "deploy hook" is a webhook URL that starts a build on demand.
+      # Create one in the Pages project: Settings > Builds and deployments
+      # > Deploy hooks (branch: main), then add it as the CF_PAGES_DEPLOY_HOOK
+      # secret in this repo's Settings > Secrets and variables > Actions.
       # The docs site fetches "latest release" from the GitHub API at build
-      # time (see website/src/lib/version.ts), so a fresh build is all it
-      # needs to pick up this release - no doc edit, no website-repo commit.
-      # Reuses TAP_GITHUB_TOKEN (see the goreleaser step above) since the
-      # default GITHUB_TOKEN can't dispatch workflows on another repository.
-      - name: Trigger website rebuild
-        run: |
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${{ secrets.TAP_GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/terminalika/website/actions/workflows/deploy.yml/dispatches \
-            -d '{"ref":"main"}'
+      # time (see website/src/lib/version.ts), so the rebuild alone is
+      # enough to pick up this release - no doc edit, no website-repo commit.
+      - name: Trigger a Cloudflare Pages rebuild of the website
+        if: ${{ secrets.CF_PAGES_DEPLOY_HOOK != '' }}
+        run: curl -fsSL -X POST "${{ secrets.CF_PAGES_DEPLOY_HOOK }}"

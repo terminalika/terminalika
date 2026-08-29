@@ -16,6 +16,13 @@ changes.
    the tap/bucket repos.
 4. License: both repos carry a MIT `LICENSE` file; `.goreleaser.yaml` sets
    `license: MIT` for the cask, scoop manifest and nfpm packages.
+5. `terminalika.dev` is served by Cloudflare Pages (its own git integration
+   builds `terminalika/website` on every push to `main` - no GitHub Actions
+   involved on that side). To have a release here also refresh the site,
+   create a deploy hook in the Cloudflare Pages project (Settings → Builds
+   and deployments → Deploy hooks, branch `main`) and add it as the
+   `CF_PAGES_DEPLOY_HOOK` secret in `terminalika/terminalika` (Settings →
+   Secrets and variables → Actions). Optional: skipped silently if unset.
 
 ## Releasing a new core version
 
@@ -53,9 +60,10 @@ goreleaser and:
   release,
 - pushes a Homebrew cask to `terminalika/homebrew-tap`,
 - pushes a Scoop manifest to `terminalika/scoop-bucket`,
-- triggers a rebuild of `terminalika/website`, which picks up this release as
-  "latest" at build time (`website/src/lib/version.ts`) — nothing to edit
-  there by hand.
+- if `CF_PAGES_DEPLOY_HOOK` is set (see one-time setup above), triggers a
+  Cloudflare Pages rebuild of `terminalika/website`, which picks up this
+  release as "latest" at build time (`website/src/lib/version.ts`) —
+  nothing to edit there by hand.
 
 Users then install with:
 
