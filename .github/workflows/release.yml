@@ -4,12 +4,17 @@ on:
   push:
     tags:
       - 'v*'
+  # Lets rebuild-website (below) be tested on demand from the Actions tab
+  # without cutting a real release. goreleaser itself still only ever runs
+  # on an actual tag push - see its `if:` below.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   goreleaser:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +40,9 @@ jobs:
 
   rebuild-website:
     needs: goreleaser
+    # Runs after a successful release, or standalone on a manual
+    # workflow_dispatch run (where goreleaser is skipped, not failed).
+    if: always() && needs.goreleaser.result != 'failure'
     runs-on: ubuntu-latest
     steps:
       # terminalika.dev is served by Cloudflare Pages (its own git
