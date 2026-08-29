@@ -44,6 +44,10 @@ jobs:
     # workflow_dispatch run (where goreleaser is skipped, not failed).
     if: always() && needs.goreleaser.result != 'failure'
     runs-on: ubuntu-latest
+    env:
+      # `secrets` isn't allowed directly inside an `if:` expression, hence
+      # routing it through `env` here so the step below can check it.
+      CF_PAGES_DEPLOY_HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}
     steps:
       # terminalika.dev is served by Cloudflare Pages (its own git
       # integration builds on every push to the website repo's main - no
@@ -57,5 +61,5 @@ jobs:
       # time (see website/src/lib/version.ts), so the rebuild alone is
       # enough to pick up this release - no doc edit, no website-repo commit.
       - name: Trigger a Cloudflare Pages rebuild of the website
-        if: ${{ secrets.CF_PAGES_DEPLOY_HOOK != '' }}
-        run: curl -fsSL -X POST "${{ secrets.CF_PAGES_DEPLOY_HOOK }}"
+        if: ${{ env.CF_PAGES_DEPLOY_HOOK != '' }}
+        run: curl -fsSL -X POST "$CF_PAGES_DEPLOY_HOOK"
