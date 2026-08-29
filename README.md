@@ -57,6 +57,8 @@ go run .
 # skip the menu and launch a game directly
 go run . --game=snake
 go run . --game=tetris
+go run . --game=invaders
+go run . --game=pong
 
 # also open the WebSocket sidecar (default 127.0.0.1:8080; use -ws="" to disable)
 go run . --game=snake --ws=127.0.0.1:8080
@@ -86,6 +88,30 @@ runs):
 the sidecar enabled makes each overwrite the others' entry; if you need to
 observe more than one instance's sidecar, run the rest with `-ws=""` or
 discover their ports another way.
+
+### Key releases
+
+Terminals normally only report key presses; holding a key just produces the
+terminal's auto-repeat (one event, a pause, then a burst), which makes
+continuous movement feel sticky. At start the launcher asks the terminal
+(`CSI ? u`, before tcell takes over) whether it speaks the
+[kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
+If it does, tcell's tty is wrapped (`internal/keystate`): the wrapper asks
+for the protocol's *report event types* flag, pulls the key release
+sequences out of the input stream before tcell (which doesn't understand
+them) sees them, rewrites repeats into plain presses and re-injects each
+release as a press of the same key marked with a Hyper modifier
+(`keystate.ReleaseMod`), so it goes through tcell's own queue in order with
+the presses; the engine turns those back into releases for games implementing
+`core.KeyStateHandler`. On Windows, Windows Terminal's win32-input-mode
+key-ups are used the same way.
+
+Terminals with real key releases: kitty, foot, Ghostty, Alacritty, WezTerm
+(`enable_kitty_keyboard = true`), iTerm2, Konsole, Rio, Windows Terminal;
+tmux passes the protocol through with `extended-keys` on. Without support
+(GNOME Terminal and other VTE terminals, xterm, Terminal.app) a warning is
+shown once at start and the engine synthesises a release ~120 ms after a
+key's last press or auto-repeat.
 
 ### WebSocket protocol
 
@@ -157,7 +183,7 @@ Event watched: a new assistant message with a terminal `stopReason` (e.g.
 starts count; existing history is skipped.
 
 The pause command is sent with a `reason` payload, so the game's pause overlay
-reads `Paused by PI`. The `snake.pause` / `tetris.pause` commands also accept
+reads `Paused by PI`. The `<game>.pause` commands (`snake.pause`, `pong.pause`, ...) also accept
 an optional `reason` field for any other client:
 
 ```json

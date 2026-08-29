@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/gdamore/tcell/v2"
+
+	"github.com/terminalika/terminalika/internal/keystate"
 )
 
 // Menu lists the games registered in terminalika-core.
@@ -37,6 +39,13 @@ func (m *Menu) Run() (string, bool) {
 
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
+			// A key release reported by the terminal travels through as a
+			// marked press (see keystate.Wrap) so it survives tcell's own
+			// parser; the menu has no use for key state and must ignore it,
+			// or every navigation key would fire twice per tap.
+			if keystate.IsRelease(ev) {
+				continue
+			}
 			switch ev.Key() {
 			case tcell.KeyEscape, tcell.KeyCtrlC:
 				return "", false
@@ -74,13 +83,14 @@ func (m *Menu) draw() {
 
 	w, h := s.Size()
 
-	titleStyle := tcell.StyleDefault.Foreground(tcell.ColorAqua).Bold(true)
+	titleStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen).Bold(true)
 	subtitleStyle := tcell.StyleDefault.Foreground(tcell.ColorGray)
 	itemStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 	selectedStyle := tcell.StyleDefault.
 		Foreground(tcell.ColorBlack).
 		Background(tcell.ColorAqua)
 
+	drawLogo(s, w/2-logoWidth/2, h/2-8)
 	emitCentered(s, w/2, h/2-4, titleStyle, "TERMINALIKA")
 	emitCentered(s, w/2, h/2-3, subtitleStyle, "select a game")
 
@@ -97,6 +107,46 @@ func (m *Menu) draw() {
 	emitCentered(s, w/2, h-2, subtitleStyle, "Arrows: navigate  Enter: play  Esc/Q: quit")
 
 	s.Show()
+}
+
+// logoCellWidth/logoSize/logoWidth describe the terminalika logo: a 3x3
+// snake board -
+//
+//	[0 0 g]
+//	[r 0 g]
+//	[0 g g]
+//
+// g = snake body (green), r = food (red), 0 = empty - the same board as the
+// website's logo.svg/favicon.svg. Each logical pixel is drawn two columns
+// wide so it reads roughly square in a terminal cell grid.
+const (
+	logoCellWidth = 2
+	logoSize      = 3
+	logoWidth     = logoSize * logoCellWidth
+)
+
+type logoPixel struct {
+	x, y  int
+	color tcell.Color
+}
+
+var logoPixels = []logoPixel{
+	{2, 0, tcell.ColorGreen},
+	{0, 1, tcell.ColorRed},
+	{2, 1, tcell.ColorGreen},
+	{1, 2, tcell.ColorGreen},
+	{2, 2, tcell.ColorGreen},
+}
+
+// drawLogo draws the terminalika logo with its top-left corner at (x, y).
+func drawLogo(s tcell.Screen, x, y int) {
+	for _, p := range logoPixels {
+		style := tcell.StyleDefault.Background(p.color)
+		px, py := x+p.x*logoCellWidth, y+p.y
+		for i := 0; i < logoCellWidth; i++ {
+			s.SetContent(px+i, py, ' ', nil, style)
+		}
+	}
 }
 
 func emitCentered(s tcell.Screen, centerX, y int, style tcell.Style, str string) {

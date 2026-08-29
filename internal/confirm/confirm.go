@@ -2,7 +2,11 @@
 // the player a one-off question before a game starts.
 package confirm
 
-import "github.com/gdamore/tcell/v2"
+import (
+	"github.com/gdamore/tcell/v2"
+
+	"github.com/terminalika/terminalika/internal/keystate"
+)
 
 // Ask draws lines of text above a Yes/No choice and blocks until the player
 // answers. Left/Right/Tab move the selection, Enter confirms it, Y/N answer
@@ -47,6 +51,12 @@ func Ask(screen tcell.Screen, lines []string) bool {
 		}
 		switch ev := ev.(type) {
 		case *tcell.EventKey:
+			// See menu.Run: a key release travels through as a marked press
+			// (keystate.Wrap) and must be ignored, or Left/Right/Tab would
+			// flip the selection twice per tap.
+			if keystate.IsRelease(ev) {
+				continue
+			}
 			switch ev.Key() {
 			case tcell.KeyEscape, tcell.KeyCtrlC:
 				return false

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	core "github.com/terminalika/terminalika-core"
@@ -19,8 +20,10 @@ import (
 	"github.com/terminalika/terminalika/internal/config"
 	"github.com/terminalika/terminalika/internal/confirm"
 	"github.com/terminalika/terminalika/internal/engine"
+	"github.com/terminalika/terminalika/internal/keystate"
 	"github.com/terminalika/terminalika/internal/listener"
 	"github.com/terminalika/terminalika/internal/menu"
+	"github.com/terminalika/terminalika/internal/notice"
 	"github.com/terminalika/terminalika/internal/pisession"
 	"github.com/terminalika/terminalika/internal/sidecar"
 	"github.com/terminalika/terminalika/internal/wsserver"
@@ -33,7 +36,7 @@ const wsPortTries = 100
 var version = "dev"
 
 func main() {
-	gameFlag := flag.String("game", "", "skip the menu and launch a game directly (snake or tetris)")
+	gameFlag := flag.String("game", "", "skip the menu and launch a game directly ("+strings.Join(games.Default().Names(), ", ")+")")
 	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for events/commands (empty disables)")
 	piFlag := flag.Bool("pi", false, "subscribe to the latest pi session and pause the game when the agent settles")
 	claudeFlag := flag.Bool("claude", false, "subscribe to the latest Claude Code session and pause the game when the agent settles")
@@ -69,7 +72,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	screen, err := tcell.NewScreen()
+	// Ask the terminal about key releases before tcell takes it over.
+	support := keystate.Probe()
+
+	screen, releases, err := newScreen(support)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not create screen: %v\n", err)
 		os.Exit(1)
@@ -80,6 +86,10 @@ func main() {
 	}
 	defer screen.Fini()
 
+	if !releases {
+		notice.Show(screen, keyReleaseWarning(support))
+	}
+
 	seat, err := resolveListenerSeat(screen, &pi, &claude)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
@@ -89,7 +99,7 @@ func main() {
 	}
 
 	if *gameFlag != "" {
-		runGame(screen, registry, *gameFlag, *wsFlag, pi, claude, seat)
+		runGame(screen, releases, registry, *gameFlag, *wsFlag, pi, claude, seat)
 		return
 	}
 
@@ -99,7 +109,67 @@ func main() {
 		if !ok {
 			return
 		}
-		runGame(screen, registry, name, *wsFlag, pi, claude, seat)
+		runGame(screen, releases, registry, name, *wsFlag, pi, claude, seat)
+	}
+}
+
+// newScreen opens the terminal screen. When the terminal reports key
+// releases (kitty keyboard protocol, win32-input-mode) tcell's tty is
+// wrapped so the releases reach the engine as marked key events; it reports
+// whether that is the case. Otherwise a plain screen is used and the engine
+// synthesises releases from auto-repeat.
+func newScreen(support keystate.Support) (tcell.Screen, bool, error) {
+	if support.Releases() {
+		if tty, err := tcell.NewDevTty(); err == nil {
+			if s, err := tcell.NewTerminfoScreenFromTty(keystate.Wrap(tty, support)); err == nil {
+				return s, true, nil
+			}
+		}
+	}
+	s, err := tcell.NewScreen()
+	return s, false, err
+}
+
+// docsURL is the documentation site; the key-release notices point at the
+// page explaining the player's particular situation.
+const docsURL = "terminalika.dev"
+
+// keyReleaseWarning is shown when the terminal cannot report key releases:
+// holding a key then only produces the terminal's auto-repeat, which makes
+// continuous movement (paddles, the cannon) feel sticky. The notice stays
+// short and defers the full explanation to the website.
+func keyReleaseWarning(support keystate.Support) []string {
+	if support.Zellij {
+		return []string{
+			"Zellij does not relay key releases",
+			"",
+			"Held keys (paddles, cannon) will feel sticky.",
+			"Your terminal is fine; run outside zellij for smooth movement.",
+			"",
+			docsURL + "/terminals/zellij",
+		}
+	}
+	if support.Tmux {
+		return []string{
+			"tmux does not support the kitty keyboard protocol",
+			"",
+			"Held keys (paddles, cannon) will feel sticky.",
+			"Your terminal is fine; run outside tmux for smooth movement.",
+			"",
+			docsURL + "/terminals/tmux",
+		}
+	}
+	return []string{
+		"Your terminal does not report key releases",
+		"",
+		"Held keys (paddles, cannon) will feel sticky.",
+		"Use a terminal that speaks the kitty keyboard protocol",
+		"(kitty, foot, Ghostty, Alacritty, WezTerm, iTerm2, Konsole, Rio;",
+		"Windows Terminal on Windows).",
+		"",
+		docsURL + "/terminals",
+		"",
+		"Detected: " + support.Detail,
 	}
 }
 
@@ -176,13 +246,14 @@ func resolveWSAddr(base string, tries int) (net.Listener, string, error) {
 	return nil, "", fmt.Errorf("no free port starting at %s after %d tries: %w", base, tries, lastErr)
 }
 
-func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string, pi piWatch, claude claudeWatch, seat *listener.Seat) {
+func runGame(screen tcell.Screen, releases bool, registry *core.Registry, name, wsAddr string, pi piWatch, claude claudeWatch, seat *listener.Seat) {
 	game, ok := registry.Get(name)
 	if !ok {
 		return
 	}
 
 	eng := engine.New(screen, game)
+	eng.SetTerminalReleases(releases)
 
 	// The listener seat may have been taken over by another process since it
 	// was claimed (or since the last game was played from this menu loop);
