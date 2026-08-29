@@ -1,10 +1,11 @@
 # terminalika
 
-Terminalika is a tiny terminal game launcher for developers who want something
-nostalgic to do while their AI agents are working: fire it up alongside a
-coding agent, and it can pause your game automatically the moment the agent
-needs your attention, so you never miss a turn-taking cue while lost in Snake
-or Tetris.
+Terminalika is a tiny terminal game launcher for developers who want
+something instant to pick up, with no learning curve, and easy to put down
+without losing focus, to do while their AI agents are working: fire it up
+alongside a coding agent, and it can pause your game automatically the moment
+the agent needs your attention, so you never miss a turn-taking cue while
+lost in Snake or Tetris.
 
 This repo is the standalone CLI — the menu, the game loop/engine, keybindings,
 the optional WebSocket sidecar, and the pi/Claude Code session watchers. The
