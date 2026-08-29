@@ -114,9 +114,10 @@ func (m *Menu) draw() {
 //
 //	[0 0 g]
 //	[r 0 g]
-//	[0 g g]
+//	[0 H g]
 //
-// g = snake body (green), r = food (red), 0 = empty - the same board as the
+// g = snake body (green), H = snake head (lime, matches games/snake/draw.go
+// in terminalika-core), r = food (red), 0 = empty - the same board as the
 // website's logo.svg/favicon.svg. Each logical pixel is drawn two columns
 // wide so it reads roughly square in a terminal cell grid.
 const (
@@ -134,7 +135,7 @@ var logoPixels = []logoPixel{
 	{2, 0, tcell.ColorGreen},
 	{0, 1, tcell.ColorRed},
 	{2, 1, tcell.ColorGreen},
-	{1, 2, tcell.ColorGreen},
+	{1, 2, tcell.ColorLime},
 	{2, 2, tcell.ColorGreen},
 }
 
