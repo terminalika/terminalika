@@ -13,7 +13,8 @@ import (
 
 // Config is the root configuration object.
 type Config struct {
-	PI PI `json:"pi"`
+	PI     PI     `json:"pi"`
+	Claude Claude `json:"claude"`
 }
 
 // PI controls the pi session subscription: when enabled, the launcher watches
@@ -21,6 +22,23 @@ type Config struct {
 type PI struct {
 	// Subscribe enables the subscription. It can also be forced with the
 	// -pi flag; the flag and this field are OR-ed together.
+	Subscribe bool `json:"subscribe"`
+
+	// Dir is the project directory whose latest session to watch. Empty
+	// means the launcher's current working directory.
+	Dir string `json:"dir"`
+
+	// Session is an explicit session file path. When non-empty it wins over
+	// Dir.
+	Session string `json:"session"`
+}
+
+// Claude controls the Claude Code session subscription: when enabled, the
+// launcher watches the latest Claude Code session file and pauses the game
+// when the agent settles.
+type Claude struct {
+	// Subscribe enables the subscription. It can also be forced with the
+	// -claude flag; the flag and this field are OR-ed together.
 	Subscribe bool `json:"subscribe"`
 
 	// Dir is the project directory whose latest session to watch. Empty

@@ -2,7 +2,6 @@ package sidecar
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -41,34 +40,4 @@ func TestRemoveInfo(t *testing.T) {
 	if _, err := os.Stat(InfoPath()); !os.IsNotExist(err) {
 		t.Fatalf("ws.json should be removed, stat err = %v", err)
 	}
-}
-
-func TestAcquireLockExcludesSecondInstance(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "instance.lock")
-
-	release, err := AcquireLock(path)
-	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
-	}
-	defer release()
-
-	if _, err := AcquireLock(path); err == nil {
-		t.Fatal("second AcquireLock should fail while the first holds the lock")
-	}
-}
-
-func TestAcquireLockReleaseAllowsReacquire(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "instance.lock")
-
-	release, err := AcquireLock(path)
-	if err != nil {
-		t.Fatalf("AcquireLock: %v", err)
-	}
-	release()
-
-	release2, err := AcquireLock(path)
-	if err != nil {
-		t.Fatalf("AcquireLock after release: %v", err)
-	}
-	release2()
 }

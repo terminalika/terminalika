@@ -62,11 +62,15 @@ go run . --game=tetris
 go run . --game=snake --ws=127.0.0.1:8080
 ```
 
-Only **one terminalika instance** can run per machine: a second launch prints
-an error and exits. The lock lives in `instance.lock` in the user config dir
-(`~/.config/terminalika` on Linux, `~/Library/Application Support/terminalika`
-on macOS, `%AppData%\terminalika` on Windows) and is released automatically
-when the process exits (`flock` on Unix, `LockFileEx` on Windows).
+Multiple terminalika instances can run at once, but only one may listen for
+agent events at a time - regardless of which agent(s) it watches. Launching a
+second instance with `-pi`/`-claude` (or `subscribe` in config) while another
+live instance already holds that seat asks the player whether to move
+listening to this window; declining leaves that instance running the game
+without pausing on any agent events. An instance started with neither flag
+never asks and never pauses on its own. The seat is tracked in
+`listener.json` in the user config dir, with a heartbeat so a crashed
+holder's seat is reclaimed automatically instead of asking forever.
 
 The sidecar binds to the `-ws` base address. If that port is already taken
 (e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port
@@ -77,6 +81,11 @@ runs):
 ```json
 {"game":"snake","addr":"127.0.0.1:8081","url":"ws://127.0.0.1:8081"}
 ```
+
+`ws.json` is a single shared file, so running several instances at once with
+the sidecar enabled makes each overwrite the others' entry; if you need to
+observe more than one instance's sidecar, run the rest with `-ws=""` or
+discover their ports another way.
 
 ### WebSocket protocol
 
@@ -154,6 +163,60 @@ an optional `reason` field for any other client:
 ```json
 {"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused by PI"}}
 ```
+
+## Claude Code subscription
+
+The launcher can also subscribe to Claude Code sessions, the same way it does
+for pi: it tails Claude Code's own session files and pauses the game when the
+agent settles, no separate bridge process needed.
+
+The session directory follows Claude Code's own layout:
+`~/.claude/projects` by default, or `<dir>/projects` when
+`CLAUDE_CONFIG_DIR` is set.
+
+By default **any** session of **any** running Claude Code instance triggers
+the pause (a session's own subagent transcripts are never watched directly).
+To restrict it, set `dir` or `session` in the config.
+
+Enable it with the `-claude` flag or in `~/.config/terminalika/config.json`:
+
+```sh
+# enable via flag
+go run . --game=snake -claude
+
+# or via config (either one is enough)
+cat > ~/.config/terminalika/config.json <<'EOF'
+{"claude":{"subscribe":true}}
+EOF
+go run . --game=snake
+```
+
+Config fields under `claude`:
+
+- `subscribe` (bool): enable the subscription (OR-ed with `-claude`).
+- `dir` (string, optional): restrict to sessions of the Claude Code instance
+  running in this project directory. Unset = every project.
+- `session` (string, optional): explicit session file path; overrides `dir`.
+
+```jsonc
+// example: only react to Claude Code running in this one directory
+{"claude": {"subscribe": true, "dir": "/home/me/my-project"}}
+```
+
+Event watched: a new assistant message with a terminal `stop_reason` (e.g.
+`end_turn`) → `<game>.pause`. Assistant messages that are still calling tools
+(`stop_reason: "tool_use"`) are ignored. Only entries appended after the game
+starts count; existing history is skipped.
+
+The pause command is sent with a `reason` payload, so the game's pause overlay
+reads `Paused by Claude`:
+
+```json
+{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused by Claude"}}
+```
+
+Both subscriptions can be enabled at the same time (`-pi -claude`); either
+agent settling pauses the game.
 
 ## Local development
 

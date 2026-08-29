@@ -15,8 +15,11 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
+	"github.com/terminalika/terminalika/internal/claudesession"
 	"github.com/terminalika/terminalika/internal/config"
+	"github.com/terminalika/terminalika/internal/confirm"
 	"github.com/terminalika/terminalika/internal/engine"
+	"github.com/terminalika/terminalika/internal/listener"
 	"github.com/terminalika/terminalika/internal/menu"
 	"github.com/terminalika/terminalika/internal/pisession"
 	"github.com/terminalika/terminalika/internal/sidecar"
@@ -33,6 +36,7 @@ func main() {
 	gameFlag := flag.String("game", "", "skip the menu and launch a game directly (snake or tetris)")
 	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for events/commands (empty disables)")
 	piFlag := flag.Bool("pi", false, "subscribe to the latest pi session and pause the game when the agent settles")
+	claudeFlag := flag.Bool("claude", false, "subscribe to the latest Claude Code session and pause the game when the agent settles")
 	versionFlag := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -50,15 +54,11 @@ func main() {
 		dir:     cfg.PI.Dir,
 		session: cfg.PI.Session,
 	}
-
-	// Single instance: only one terminalika process may run per machine. This
-	// runs before the terminal goes raw, so the error is visible on screen.
-	release, err := sidecar.AcquireLock(sidecar.LockPath())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	claude := claudeWatch{
+		enabled: *claudeFlag || cfg.Claude.Subscribe,
+		dir:     cfg.Claude.Dir,
+		session: cfg.Claude.Session,
 	}
-	defer release()
 
 	registry := games.Default()
 
@@ -80,8 +80,16 @@ func main() {
 	}
 	defer screen.Fini()
 
+	seat, err := resolveListenerSeat(screen, &pi, &claude)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
+	}
+	if seat != nil {
+		defer seat.Release()
+	}
+
 	if *gameFlag != "" {
-		runGame(screen, registry, *gameFlag, *wsFlag, pi)
+		runGame(screen, registry, *gameFlag, *wsFlag, pi, claude, seat)
 		return
 	}
 
@@ -91,13 +99,52 @@ func main() {
 		if !ok {
 			return
 		}
-		runGame(screen, registry, name, *wsFlag, pi)
+		runGame(screen, registry, name, *wsFlag, pi, claude, seat)
 	}
+}
+
+// resolveListenerSeat decides whether this process may run the pi/Claude
+// Code watchers: only one terminalika process may hold the listener seat at
+// a time, since a single agent's events should only ever pause one screen.
+//
+// A process that doesn't want to listen at all (neither -pi nor -claude, nor
+// their config equivalents) never touches the seat. When the seat is free -
+// or its holder is gone without releasing it - it's claimed silently. When a
+// live process already holds it, the player is asked whether to move
+// listening here; declining disables both watches for this process without
+// asking again.
+func resolveListenerSeat(screen tcell.Screen, pi *piWatch, claude *claudeWatch) (*listener.Seat, error) {
+	if !pi.enabled && !claude.enabled {
+		return nil, nil
+	}
+
+	if status := listener.Check(); status.Held {
+		if !confirm.Ask(screen, []string{
+			"Another terminalika window is currently listening",
+			"for agent events (pi / Claude Code).",
+			"",
+			"Move event listening to this window instead?",
+		}) {
+			pi.enabled = false
+			claude.enabled = false
+			return nil, nil
+		}
+	}
+
+	return listener.Claim(nil)
 }
 
 // piWatch is the resolved pi subscription configuration: the -pi flag and the
 // config file are OR-ed together.
 type piWatch struct {
+	enabled bool
+	dir     string
+	session string
+}
+
+// claudeWatch is the resolved Claude Code subscription configuration: the
+// -claude flag and the config file are OR-ed together.
+type claudeWatch struct {
 	enabled bool
 	dir     string
 	session string
@@ -129,7 +176,7 @@ func resolveWSAddr(base string, tries int) (net.Listener, string, error) {
 	return nil, "", fmt.Errorf("no free port starting at %s after %d tries: %w", base, tries, lastErr)
 }
 
-func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string, pi piWatch) {
+func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string, pi piWatch, claude claudeWatch, seat *listener.Seat) {
 	game, ok := registry.Get(name)
 	if !ok {
 		return
@@ -137,8 +184,45 @@ func runGame(screen tcell.Screen, registry *core.Registry, name, wsAddr string, 
 
 	eng := engine.New(screen, game)
 
+	// The listener seat may have been taken over by another process since it
+	// was claimed (or since the last game was played from this menu loop);
+	// don't start watchers this process no longer has the right to run.
+	if seat != nil && !seat.Held() {
+		pi.enabled = false
+		claude.enabled = false
+	}
+
 	stopPi := startPiWatch(name, eng, pi)
 	defer stopPi()
+
+	stopClaude := startClaudeWatch(name, eng, claude)
+	defer stopClaude()
+
+	// While this session's watchers are active, keep confirming the seat is
+	// still ours; if another process takes over mid-session, stop reacting
+	// to agent events immediately instead of waiting for the next game.
+	stopSeatWatch := func() {}
+	if seat != nil && (pi.enabled || claude.enabled) {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if !seat.Held() {
+						stopPi()
+						stopClaude()
+						return
+					}
+				}
+			}
+		}()
+		stopSeatWatch = cancel
+	}
+	defer stopSeatWatch()
 
 	// Optional WebSocket sidecar: terminal stays in charge, remote clients can
 	// observe events and send commands.
@@ -189,6 +273,26 @@ func startPiWatch(game string, eng *engine.Engine, pi piWatch) func() {
 		eng.SendCommand(core.Command{
 			Type:    game + ".pause",
 			Payload: core.MustJSON(map[string]string{"reason": "Paused by PI"}),
+		})
+	})
+	go w.Run(ctx)
+	return cancel
+}
+
+// startClaudeWatch subscribes the game to the latest Claude Code session:
+// when the agent settles, the game is paused. It returns a stop function that
+// cancels the watcher. When the subscription is disabled or no session can be
+// found it returns a no-op stop.
+func startClaudeWatch(game string, eng *engine.Engine, claude claudeWatch) func() {
+	if !claude.enabled {
+		return func() {}
+	}
+	scope := claudesession.ResolveScope(claudesession.Options{Dir: claude.dir, Session: claude.session})
+	ctx, cancel := context.WithCancel(context.Background())
+	w := claudesession.NewWatcher(scope, func() {
+		eng.SendCommand(core.Command{
+			Type:    game + ".pause",
+			Payload: core.MustJSON(map[string]string{"reason": "Paused by Claude"}),
 		})
 	})
 	go w.Run(ctx)
