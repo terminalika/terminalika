@@ -4,17 +4,12 @@ on:
   push:
     tags:
       - 'v*'
-  # Lets rebuild-website (below) be tested on demand from the Actions tab
-  # without cutting a real release. goreleaser itself still only ever runs
-  # on an actual tag push - see its `if:` below.
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   goreleaser:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,29 +32,3 @@ jobs:
           # here. Create the secret as TAP_GITHUB_TOKEN in this repo's
           # Settings > Secrets and variables > Actions.
           GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-
-  rebuild-website:
-    needs: goreleaser
-    # Runs after a successful release, or standalone on a manual
-    # workflow_dispatch run (where goreleaser is skipped, not failed).
-    if: always() && needs.goreleaser.result != 'failure'
-    runs-on: ubuntu-latest
-    env:
-      # `secrets` isn't allowed directly inside an `if:` expression, hence
-      # routing it through `env` here so the step below can check it.
-      CF_PAGES_DEPLOY_HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}
-    steps:
-      # terminalika.dev is served by Cloudflare Pages (its own git
-      # integration builds on every push to the website repo's main - no
-      # GitHub Actions involved there). Pushing a tag here doesn't touch
-      # that repo, so nothing would rebuild it on its own; a Cloudflare
-      # Pages "deploy hook" is a webhook URL that starts a build on demand.
-      # Create one in the Pages project: Settings > Builds and deployments
-      # > Deploy hooks (branch: main), then add it as the CF_PAGES_DEPLOY_HOOK
-      # secret in this repo's Settings > Secrets and variables > Actions.
-      # The docs site fetches "latest release" from the GitHub API at build
-      # time (see website/src/lib/version.ts), so the rebuild alone is
-      # enough to pick up this release - no doc edit, no website-repo commit.
-      - name: Trigger a Cloudflare Pages rebuild of the website
-        if: ${{ env.CF_PAGES_DEPLOY_HOOK != '' }}
-        run: curl -fsSL -X POST "$CF_PAGES_DEPLOY_HOOK"
