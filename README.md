@@ -5,47 +5,14 @@ Standalone CLI launcher for the Terminalika terminal games. It consumes the
 
 ## Install
 
-### Linux: direct downloads (.deb / .rpm / pkg.tar.zst)
+Prebuilt packages and binaries (Homebrew, Scoop, `.deb`/`.rpm`/`.pkg.tar.zst`/
+`.apk`, raw `tar.gz`/`zip`) are documented on
+**[terminalika.dev/install](https://terminalika.dev/install/)**.
 
-Every release ships prebuilt `.deb`, `.rpm` and `.pkg.tar.zst (for arch)` packages on the
-[releases page](https://github.com/terminalika/terminalika/releases) —
-install them directly
-
-```sh
-# Debian / Ubuntu (amd64)
-wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.deb
-sudo apt install ./terminalika_amd64.deb
-
-# Fedora / RHEL / openSUSE (amd64)
-wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.rpm
-sudo dnf install ./terminalika_amd64.rpm
-
-# Arch Linux — pacman installs the release's .pkg.tar.zst directly
-wget https://github.com/terminalika/terminalika/releases/latest/download/terminalika_amd64.pkg.tar.zst
-sudo pacman -U terminalika_amd64.pkg.tar.zst
-```
-
-Every file name uses `amd64`/`arm64`, not each distro's native `x86_64`/
-`aarch64` spelling — the package managers read the real architecture from
-the package metadata, not the file name, so this is cosmetic only. `arm64`
-variants of every package are attached too, alongside raw binaries
-(`tar.gz` for Linux/macOS, `zip` for Windows).
-
-### Windows and MacOS
+To build from source instead (Go 1.24+):
 
 ```sh
-# Homebrew (macOS/Linux)
-brew tap terminalika/tap && brew install --cask terminalika
-
-# Scoop (Windows)
-scoop bucket add terminalika https://github.com/terminalika/scoop-bucket
-scoop install terminalika
-```
-
-### From source
-
-```sh
-go install github.com/terminalika/terminalika@latest   # Go 1.24+
+go install github.com/terminalika/terminalika@latest
 ```
 
 On Windows you need Windows 10+ and a VT-capable terminal (Windows
