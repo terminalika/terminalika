@@ -1,5 +1,7 @@
 # terminalika
 
+![terminalika next to Claude Code: the game pauses when the agent needs you](.github/demo.gif)
+
 Terminalika is an event-driven focus hub for people who work with CLI AI
 agents. It listens to the agents you pick (Claude Code, Pi Agent, Aider,
 Cursor CLI), tells you the moment one finishes or needs your input, and
@@ -8,8 +10,6 @@ you're playing with a one-line notice that says exactly who wants what.
 The games are deliberately easy to drop: the point is to stay in the
 terminal for a few-minute wait instead of losing 20 minutes to a browser
 tab.
-
-![terminalika next to Claude Code: the game pauses when the agent needs you](.github/demo.gif)
 
 Marketing pitch, install matrix and docs: **[terminalika.dev](https://terminalika.dev)**.
 This file is the technical reference for the CLI.
