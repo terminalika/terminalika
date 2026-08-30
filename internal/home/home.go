@@ -679,13 +679,24 @@ func (h *Home) drawUnderline(x, y, width int) {
 	if h.food >= 0 && h.food < width {
 		s.SetContent(x+h.food, y, '◆', nil, tcell.StyleDefault.Foreground(tcell.ColorRed))
 	}
-	for i := 0; i < h.snakeLen; i++ {
+	// The snake: a round head, a thick body tapering into the tail, and a
+	// forked tongue flicking out ahead of the head now and then.
+	for i := h.snakeLen - 1; i >= 0; i-- {
 		pos := ((h.snakeHead-i)%width + width) % width
 		ch, style := '━', tcell.StyleDefault.Foreground(ui.Green).Bold(true)
-		if i == 0 {
-			ch, style = '▶', tcell.StyleDefault.Foreground(ui.Lime).Bold(true)
+		switch {
+		case i == 0:
+			ch, style = '●', tcell.StyleDefault.Foreground(ui.Lime).Bold(true)
+		case i == h.snakeLen-1:
+			ch = '╼'
 		}
 		s.SetContent(x+pos, y, ch, nil, style)
+	}
+	if h.frame/6%4 == 0 {
+		ahead := (h.snakeHead + 1) % width
+		if ahead != h.food {
+			s.SetContent(x+ahead, y, '~', nil, tcell.StyleDefault.Foreground(tcell.ColorRed))
+		}
 	}
 }
 
