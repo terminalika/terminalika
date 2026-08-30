@@ -1,5 +1,6 @@
 // Package wizard is the interactive first-run setup: which agents to
-// listen to, how to be notified, and whether games pause on agent events.
+// listen to, when to send a desktop notification, whether games pause on
+// agent events, and whether terminalika keeps running in the background.
 // The answers are written to config.json.
 package wizard
 
@@ -23,8 +24,9 @@ type step int
 
 const (
 	stepAgents step = iota
-	stepNotify
+	stepDesktop
 	stepPause
+	stepBackground
 	stepSummary
 	stepCount
 )
@@ -35,9 +37,10 @@ type Wizard struct {
 	base   config.Config
 	step   step
 
-	agents ui.List
-	notify ui.List
-	pause  ui.List
+	agents     ui.List
+	desktop    ui.List
+	pause      ui.List
+	background ui.List
 
 	saveErr error
 }
@@ -55,22 +58,54 @@ func New(screen tcell.Screen, base config.Config) *Wizard {
 			Value:   string(a.ID),
 		})
 	}
-	w.notify.Items = []ui.Item{
-		{Label: "Audio Bell / Sound Effect", Hint: "terminal \\a, or the terminal's own alert sound", Checked: base.Notify.Bell, Value: "bell"},
-		{Label: "OS Desktop Notification", Hint: "native OS notification alert", Checked: base.Notify.Desktop, Value: "desktop"},
+
+	w.desktop.Single = true
+	w.desktop.Items = []ui.Item{
+		{Label: "When terminalika isn't focused (Recommended)", Hint: "the overlay has you covered while you're looking", Value: string(config.DesktopUnfocused)},
+		{Label: "Always", Hint: "every event, focused or not", Value: string(config.DesktopAlways)},
+		{Label: "Only when no terminalika window is open", Hint: "needs the background process (next step)", Value: string(config.DesktopNoWindow)},
+		{Label: "Never", Hint: "in-game overlay only", Value: string(config.DesktopNever)},
 	}
+	selectValue(&w.desktop, string(base.DesktopMode()))
+
 	w.pause.Single = true
 	w.pause.Items = []ui.Item{
 		{Label: "Yes / Pause Game (Recommended)", Hint: "freeze the game and show who needs you", Value: "yes"},
 		{Label: "No, only notify", Hint: "keep playing; a banner shows the event", Value: "no"},
 	}
 	if base.PauseOnEvent() {
-		w.pause.Items[0].Checked = true
+		selectValue(&w.pause, "yes")
 	} else {
-		w.pause.Items[1].Checked = true
-		w.pause.Cursor = 1
+		selectValue(&w.pause, "no")
+	}
+
+	w.background.Single = true
+	w.background.Items = []ui.Item{
+		{Label: "Yes, start at login (Recommended)", Hint: "notifications keep coming with every window closed", Value: "yes"},
+		{Label: "No, only while a window is open", Hint: "nothing listens once you quit", Value: "no"},
+	}
+	if base.Background {
+		selectValue(&w.background, "yes")
+	} else {
+		selectValue(&w.background, "no")
 	}
 	return w
+}
+
+// selectValue checks the radio row with the given value (the first row
+// when none matches) and parks the cursor on it.
+func selectValue(l *ui.List, value string) {
+	idx := 0
+	for i, it := range l.Items {
+		if it.Value == value {
+			idx = i
+			break
+		}
+	}
+	for i := range l.Items {
+		l.Items[i].Checked = i == idx
+	}
+	l.Cursor = idx
 }
 
 // Run drives the wizard until the player saves or cancels. It returns the
@@ -148,10 +183,12 @@ func (w *Wizard) current() *ui.List {
 	switch w.step {
 	case stepAgents:
 		return &w.agents
-	case stepNotify:
-		return &w.notify
+	case stepDesktop:
+		return &w.desktop
 	case stepPause:
 		return &w.pause
+	case stepBackground:
+		return &w.background
 	}
 	return nil
 }
@@ -166,24 +203,25 @@ func (w *Wizard) result() config.Config {
 		ids = append(ids, agents.ID(v))
 	}
 	c.SetAgents(ids)
-	c.Notify = config.Notify{}
-	for _, v := range w.notify.Checked() {
-		switch v {
-		case "bell":
-			c.Notify.Bell = true
-		case "desktop":
-			c.Notify.Desktop = true
-		}
-	}
-	pause := len(w.pause.Checked()) == 0 || w.pause.Checked()[0] == "yes"
+	c.Notify = config.Notify{Desktop: config.DesktopMode(first(w.desktop.Checked(), string(config.DesktopUnfocused)))}
+	pause := first(w.pause.Checked(), "yes") == "yes"
 	c.AutoPause = &pause
+	c.Background = first(w.background.Checked(), "yes") == "yes"
 	return c
+}
+
+func first(vals []string, fallback string) string {
+	if len(vals) == 0 {
+		return fallback
+	}
+	return vals[0]
 }
 
 var stepTitles = [stepCount]string{
 	"Which AI agents should terminalika listen to?",
-	"How do you want to be notified when an agent needs you?",
+	"When should an agent event show a desktop notification?",
 	"Pause the game automatically when an agent event arrives?",
+	"Keep terminalika running in the background?",
 	"All set.",
 }
 
@@ -204,7 +242,7 @@ func (w *Wizard) draw() {
 	if l := w.current(); l != nil {
 		items = len(l.Items)
 	} else {
-		items = 4 // summary rows
+		items = 5 // summary rows
 	}
 	compact := inner < 56 || sh < 16
 	notes := 2
@@ -248,7 +286,7 @@ func (w *Wizard) draw() {
 	ui.Print(s, x, y, ui.StyleText.Bold(true), ui.Truncate(stepTitles[w.step], inner))
 	y += 1 + spacer
 
-	for _, l := range []*ui.List{&w.agents, &w.notify, &w.pause} {
+	for _, l := range []*ui.List{&w.agents, &w.desktop, &w.pause, &w.background} {
 		l.HideHints = compact
 	}
 
@@ -261,17 +299,25 @@ func (w *Wizard) draw() {
 			y++
 			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("Advanced (directory scopes, custom webhooks): "+DocsURL, inner))
 		}
-	case stepNotify:
-		y += w.notify.Draw(s, x, y, inner)
+	case stepDesktop:
+		y += w.desktop.Draw(s, x, y, inner)
 		if notes > 0 {
 			y++
-			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("Pick one, both, or none.", inner))
+			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("In a game you always get the overlay; this is about the OS popup on top of it.", inner))
 		}
 	case stepPause:
 		y += w.pause.Draw(s, x, y, inner)
 		if notes > 0 {
 			y++
-			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("The overlay names the agent and whether it finished or needs input.", inner))
+			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("Paused: a notice in the middle of the board. Not paused: a banner in the corner.", inner))
+		}
+	case stepBackground:
+		y += w.background.Draw(s, x, y, inner)
+		if notes > 0 {
+			y++
+			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("A small `terminalika daemon` starts at login and hands over to any window you open.", inner))
+			y++
+			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("Without it, 'only when no window is open' never fires.", inner))
 		}
 	case stepSummary:
 		c := w.result()
@@ -286,23 +332,24 @@ func (w *Wizard) draw() {
 				names += a.Name
 			}
 		}
-		notify := "silent"
-		switch {
-		case c.Notify.Bell && c.Notify.Desktop:
-			notify = "bell + desktop notification"
-		case c.Notify.Bell:
-			notify = "bell"
-		case c.Notify.Desktop:
-			notify = "desktop notification"
-		}
 		pause := "pause the game"
 		if !c.PauseOnEvent() {
 			pause = "banner only, keep playing"
 		}
-		rows := [][2]string{{"agents", names}, {"notify", notify}, {"on event", pause}, {"saved to", config.Path()}}
+		bg := "no"
+		if c.Background {
+			bg = "yes, starts at login"
+		}
+		rows := [][2]string{
+			{"agents", names},
+			{"desktop", c.DesktopMode().Label()},
+			{"on event", pause},
+			{"background", bg},
+			{"saved to", config.Path()},
+		}
 		for _, r := range rows {
-			ui.Print(s, x, y, ui.StyleDim, fmt.Sprintf("%-9s", r[0]))
-			ui.Print(s, x+10, y, ui.StyleText, ui.Truncate(r[1], inner-10))
+			ui.Print(s, x, y, ui.StyleDim, fmt.Sprintf("%-11s", r[0]))
+			ui.Print(s, x+12, y, ui.StyleText, ui.Truncate(r[1], inner-12))
 			y++
 		}
 		if w.saveErr != nil && notes > 0 {

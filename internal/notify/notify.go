@@ -1,6 +1,12 @@
-// Package notify delivers an agent event to the player through the channels
-// they picked in setup: the terminal bell and/or a native OS desktop
-// notification. Both are fire-and-forget; nothing here blocks the caller.
+// Package notify delivers an agent event to the player as a native OS
+// desktop notification, when the configured mode says so. Delivery is
+// fire-and-forget; nothing here blocks the caller.
+//
+// The in-game overlay/banner is not this package's business: it is always
+// on, so the desktop notification is the one channel with a choice to make
+// - and the choice is *when*, not *whether*: always, only while no
+// terminalika window has the terminal's focus, only while no window is open
+// at all (i.e. only from the background process), or never.
 package notify
 
 import (
@@ -8,77 +14,70 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/terminalika/terminalika/internal/agents"
+	"github.com/terminalika/terminalika/internal/config"
 )
-
-// Options selects the channels.
-type Options struct {
-	Bell    bool
-	Desktop bool
-}
-
-// Notifier sends notifications.
-type Notifier struct {
-	opts Options
-
-	// beep rings the terminal bell. It's the screen's Beep when tcell owns
-	// the terminal (writing "\a" straight to stdout would corrupt the
-	// screen's own output stream), and nil when there is no screen.
-	beep func() error
-
-	// desktop shows a native notification; replaced in tests.
-	desktop func(title, body string) error
-
-	mu   sync.Mutex
-	last time.Time
-}
-
-// New builds a notifier. beep may be nil, in which case the bell channel is
-// silently unavailable.
-func New(opts Options, beep func() error) *Notifier {
-	return &Notifier{opts: opts, beep: beep, desktop: desktopNotify}
-}
-
-// Options returns the channels in use.
-func (n *Notifier) Options() Options { return n.opts }
-
-// Enabled reports whether any channel is on.
-func (n *Notifier) Enabled() bool { return n.opts.Bell || n.opts.Desktop }
-
-// Notify delivers ev through every selected channel.
-func (n *Notifier) Notify(ev agents.Event) {
-	if n.opts.Bell && n.beep != nil {
-		_ = n.beep()
-	}
-	if n.opts.Desktop {
-		title, body := ev.Title(), ev.Body()
-		go func() { _ = n.desktop(title, body) }()
-	}
-	n.mu.Lock()
-	n.last = time.Now()
-	n.mu.Unlock()
-}
-
-// Describe lists the active channels for a status line ("bell · desktop").
-func (n *Notifier) Describe() string {
-	var parts []string
-	if n.opts.Bell {
-		parts = append(parts, "bell")
-	}
-	if n.opts.Desktop {
-		parts = append(parts, "desktop")
-	}
-	if len(parts) == 0 {
-		return "silent"
-	}
-	return strings.Join(parts, " · ")
-}
 
 // desktopTimeout bounds the helper process a desktop notification spawns.
 const desktopTimeout = 5 * time.Second
+
+// Notifier sends desktop notifications according to a mode.
+type Notifier struct {
+	mode config.DesktopMode
+
+	// focused reports whether this process's window currently has the
+	// terminal's focus. nil means this process has no window at all (the
+	// background daemon), which counts as "not focused" and "no window".
+	focused func() bool
+
+	// desktop shows a native notification; replaced in tests.
+	desktop func(title, body string) error
+}
+
+// New builds a notifier. focused may be nil for a headless process.
+func New(mode config.DesktopMode, focused func() bool) *Notifier {
+	return &Notifier{mode: mode, focused: focused, desktop: desktopNotify}
+}
+
+// Mode returns the mode in use.
+func (n *Notifier) Mode() config.DesktopMode { return n.mode }
+
+// Wants reports whether an event arriving right now would be delivered.
+func (n *Notifier) Wants() bool {
+	switch n.mode {
+	case config.DesktopAlways:
+		return true
+	case config.DesktopNoWindow:
+		return n.focused == nil
+	case config.DesktopUnfocused:
+		return n.focused == nil || !n.focused()
+	}
+	return false
+}
+
+// Notify delivers ev if the mode says so.
+func (n *Notifier) Notify(ev agents.Event) {
+	if !n.Wants() {
+		return
+	}
+	title, body := ev.Title(), ev.Body()
+	go func() { _ = n.desktop(title, body) }()
+}
+
+// Describe is the mode for a status line ("desktop: when unfocused").
+func (n *Notifier) Describe() string {
+	switch n.mode {
+	case config.DesktopAlways:
+		return "desktop: always"
+	case config.DesktopNoWindow:
+		return "desktop: when no window is open"
+	case config.DesktopUnfocused:
+		return "desktop: when unfocused"
+	}
+	return "desktop: off"
+}
 
 // desktopNotify shows a native notification using the platform's stock
 // tooling, so terminalika needs no cgo or extra dependencies:

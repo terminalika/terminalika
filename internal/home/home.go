@@ -156,6 +156,10 @@ func (h *Home) Run() (string, bool) {
 				if name, done := h.handleKey(ev); done {
 					return name, name != ""
 				}
+			case *tcell.EventInterrupt:
+				// The launcher asking this window to close (another
+				// terminalika window took over; see main.go).
+				return "", false
 			}
 		}
 		h.pollHub()

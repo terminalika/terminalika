@@ -1,7 +1,14 @@
-// Package listener coordinates the single global "agent event listener"
-// seat across concurrent terminalika instances: only one process may have
-// its pi/Claude Code session watchers active and pausing a game at a time,
-// regardless of which agent(s) it watches.
+// Package listener coordinates terminalika's processes through two
+// heartbeat-refreshed seat files in the user config dir:
+//
+//   - the listener seat (listener.json): whoever holds it is the one process
+//     reacting to agent events. Every terminalika window takes it when it
+//     opens - a window that loses it closes itself, so there is only ever
+//     one window - while the background daemon takes it only when it is
+//     free, and gives way to any window;
+//   - the daemon seat (daemon.json): the single background daemon. A second
+//     daemon finding a live holder simply exits; removing the file is how
+//     a running daemon is asked to stop.
 package listener
 
 import (
@@ -13,6 +20,17 @@ import (
 	"github.com/terminalika/terminalika/internal/sidecar"
 )
 
+// Kind says what sort of process holds a seat.
+type Kind string
+
+const (
+	// Window is an interactive terminalika (home screen or a game).
+	Window Kind = "window"
+
+	// Daemon is the headless background process.
+	Daemon Kind = "daemon"
+)
+
 // staleAfter is how long a held seat is trusted without a heartbeat refresh
 // before a new claimant treats its holder as gone (e.g. crashed without
 // releasing) and claims it without asking.
@@ -22,35 +40,49 @@ var staleAfter = 5 * time.Second
 // often it checks whether it has been taken over.
 var heartbeatInterval = 2 * time.Second
 
-// Path returns the seat file's location.
+// Path returns the listener seat file's location.
 func Path() string { return filepath.Join(sidecar.Dir(), "listener.json") }
+
+// DaemonPath returns the daemon seat file's location.
+func DaemonPath() string { return filepath.Join(sidecar.Dir(), "daemon.json") }
 
 // record is the on-disk seat: who holds it and when they last proved they're
 // still alive.
 type record struct {
 	PID       int       `json:"pid"`
+	Kind      Kind      `json:"kind,omitempty"`
 	Heartbeat time.Time `json:"heartbeat"`
 }
 
-// Status reports whether the seat is currently held by a live process other
-// than the caller.
+// Status reports whether a seat is currently held by a live process other
+// than the caller, and by what.
 type Status struct {
 	Held bool
 	PID  int
+	Kind Kind
 }
 
-// Check reports the current seat status without claiming or changing
+// Check reports the listener seat's status without claiming or changing
 // anything.
-func Check() Status {
-	r, ok := read()
+func Check() Status { return check(Path()) }
+
+// CheckDaemon reports the daemon seat's status.
+func CheckDaemon() Status { return check(DaemonPath()) }
+
+func check(path string) Status {
+	r, ok := read(path)
 	if !ok || stale(r) || r.PID == os.Getpid() {
 		return Status{}
 	}
-	return Status{Held: true, PID: r.PID}
+	kind := r.Kind
+	if kind == "" {
+		kind = Window // a seat file from before kinds existed: a window
+	}
+	return Status{Held: true, PID: r.PID, Kind: kind}
 }
 
-func read() (record, bool) {
-	data, err := os.ReadFile(Path())
+func read(path string) (record, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return record{}, false
 	}
@@ -63,7 +95,7 @@ func read() (record, bool) {
 
 func stale(r record) bool { return time.Since(r.Heartbeat) > staleAfter }
 
-func write(r record) error {
+func write(path string, r record) error {
 	if err := os.MkdirAll(sidecar.Dir(), 0o755); err != nil {
 		return err
 	}
@@ -71,31 +103,54 @@ func write(r record) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(Path(), data, 0o644)
+	return os.WriteFile(path, data, 0o644)
 }
 
-// Seat is a claimed listener seat: it refreshes its heartbeat until Release,
-// so other processes see this one as the live holder.
+// Seat is a claimed seat: it refreshes its heartbeat until Release, so
+// other processes see this one as the live holder.
 type Seat struct {
+	path string
+	kind Kind
 	stop chan struct{}
 	done chan struct{}
 }
 
-// Claim takes the seat unconditionally: the caller decides beforehand
-// whether that's appropriate (the seat was free/stale, or the player agreed
-// to move listening here). onLost, if non-nil, is called once - from a
-// background goroutine - the first time another process claims the seat
-// away from this one.
-func Claim(onLost func()) (*Seat, error) {
-	if err := write(record{PID: os.Getpid(), Heartbeat: time.Now()}); err != nil {
+// Claim takes the listener seat unconditionally, as kind: the caller
+// decides beforehand whether that's appropriate (a window always may; the
+// daemon only when the seat is free). onLost, if non-nil, is called once -
+// from a background goroutine - the first time another process claims the
+// seat away from this one.
+func Claim(kind Kind, onLost func()) (*Seat, error) {
+	return claim(Path(), kind, onLost, false)
+}
+
+// ClaimDaemon takes the daemon seat. onStop is called once when the seat
+// is taken by another daemon or its file is removed (StopDaemon) - either
+// way this daemon must exit.
+func ClaimDaemon(onStop func()) (*Seat, error) {
+	return claim(DaemonPath(), Daemon, onStop, true)
+}
+
+// StopDaemon asks the running daemon, if any, to exit by removing its
+// seat; it notices within a heartbeat. A missing seat is not an error.
+func StopDaemon() error {
+	err := os.Remove(DaemonPath())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func claim(path string, kind Kind, onLost func(), lostWhenRemoved bool) (*Seat, error) {
+	if err := write(path, record{PID: os.Getpid(), Kind: kind, Heartbeat: time.Now()}); err != nil {
 		return nil, err
 	}
-	s := &Seat{stop: make(chan struct{}), done: make(chan struct{})}
-	go s.run(onLost)
+	s := &Seat{path: path, kind: kind, stop: make(chan struct{}), done: make(chan struct{})}
+	go s.run(onLost, lostWhenRemoved)
 	return s, nil
 }
 
-func (s *Seat) run(onLost func()) {
+func (s *Seat) run(onLost func(), lostWhenRemoved bool) {
 	defer close(s.done)
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
@@ -104,14 +159,14 @@ func (s *Seat) run(onLost func()) {
 		case <-s.stop:
 			return
 		case <-ticker.C:
-			r, ok := read()
-			if ok && r.PID != os.Getpid() {
+			r, ok := read(s.path)
+			if (ok && r.PID != os.Getpid()) || (!ok && lostWhenRemoved) {
 				if onLost != nil {
 					onLost()
 				}
 				return
 			}
-			_ = write(record{PID: os.Getpid(), Heartbeat: time.Now()})
+			_ = write(s.path, record{PID: os.Getpid(), Kind: s.kind, Heartbeat: time.Now()})
 		}
 	}
 }
@@ -124,9 +179,12 @@ func (s *Seat) Held() bool {
 		return false
 	default:
 	}
-	r, ok := read()
+	r, ok := read(s.path)
 	return ok && r.PID == os.Getpid()
 }
+
+// Lost returns a channel closed once the seat has been lost or released.
+func (s *Seat) Lost() <-chan struct{} { return s.done }
 
 // Release gives up the seat, if still held, and stops the heartbeat. It's a
 // no-op on a seat that has already been taken over by someone else.
@@ -137,7 +195,7 @@ func (s *Seat) Release() {
 		close(s.stop)
 		<-s.done
 	}
-	if r, ok := read(); ok && r.PID == os.Getpid() {
-		_ = os.Remove(Path())
+	if r, ok := read(s.path); ok && r.PID == os.Getpid() {
+		_ = os.Remove(s.path)
 	}
 }

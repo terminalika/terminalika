@@ -97,6 +97,14 @@ func Listen(base string) (*Server, error) {
 // Addr is the bound address.
 func (s *Server) Addr() string { return s.addr }
 
+// Publish (re)writes hub.json to point at this ingest. Listen does it once;
+// a process that takes the listener seat back after another one held it
+// (the daemon after a window closes) does it again, so `terminalika
+// notify` always reaches the process that is actually reacting.
+func (s *Server) Publish() error {
+	return writeInfo(Info{PID: os.Getpid(), Addr: s.addr, URL: s.URL()})
+}
+
 // URL is the full ingest URL clients POST to.
 func (s *Server) URL() string { return "http://" + s.addr + "/events" }
 

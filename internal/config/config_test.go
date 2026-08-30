@@ -58,9 +58,10 @@ func TestSaveRoundTrip(t *testing.T) {
 
 	c := Default()
 	c.SetAgents([]agents.ID{agents.Cursor, agents.Claude})
-	c.Notify.Desktop = false
+	c.Notify.Desktop = DesktopNoWindow
 	off := false
 	c.AutoPause = &off
+	c.Background = false
 	c.Aider.Dir = "/work"
 
 	if err := Save(c); err != nil {
@@ -79,14 +80,56 @@ func TestSaveRoundTrip(t *testing.T) {
 	if ids := got.AgentIDs(); len(ids) != 2 || ids[0] != agents.Claude || ids[1] != agents.Cursor {
 		t.Errorf("AgentIDs = %v", ids)
 	}
-	if !got.Notify.Bell || got.Notify.Desktop {
+	if got.DesktopMode() != DesktopNoWindow {
 		t.Errorf("Notify = %+v", got.Notify)
 	}
 	if got.PauseOnEvent() {
 		t.Error("PauseOnEvent() = true, want false")
 	}
+	if got.Background {
+		t.Error("Background = true, want false")
+	}
 	if got.Aider.Dir != "/work" {
 		t.Errorf("Aider.Dir = %q", got.Aider.Dir)
+	}
+}
+
+func TestVersion2BooleansMapOntoDesktopMode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TERMINALIKA_CONFIG_DIR", dir)
+
+	for _, c := range []struct {
+		file string
+		want DesktopMode
+	}{
+		{`{"version":2,"agents":["claude"],"notify":{"bell":true,"desktop":true}}`, DesktopAlways},
+		{`{"version":2,"agents":["claude"],"notify":{"bell":true,"desktop":false}}`, DesktopNever},
+		{`{"version":3,"agents":["claude"],"notify":{"desktop":"unfocused"}}`, DesktopUnfocused},
+		{`{"version":2,"agents":["claude"]}`, DesktopNever},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(c.file), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Load()
+		if err != nil {
+			t.Fatalf("Load(%s): %v", c.file, err)
+		}
+		if got.DesktopMode() != c.want {
+			t.Errorf("%s: DesktopMode = %q, want %q", c.file, got.DesktopMode(), c.want)
+		}
+		if err := got.Validate(); err != nil {
+			t.Errorf("%s: Validate: %v", c.file, err)
+		}
+		if got.Background {
+			t.Errorf("%s: Background should default to off for an existing file", c.file)
+		}
+	}
+
+	if err := (Config{Notify: Notify{Desktop: "loudly"}}).Validate(); err == nil {
+		t.Error("Validate() should flag an unknown desktop mode")
+	}
+	if d := Default(); d.DesktopMode() != DesktopUnfocused || !d.Background {
+		t.Errorf("Default() = %+v, want unfocused desktop notifications and background on", d)
 	}
 }
 

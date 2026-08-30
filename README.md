@@ -4,8 +4,10 @@ Terminalika is an event-driven AI focus hub, notification listener and
 retro game library for people who work with CLI AI agents. Pick the agents
 to monitor (Claude Code, Pi Agent, Aider, Cursor CLI) in the first-run
 wizard, and terminalika tells you the moment one finishes or needs your
-input - terminal bell, desktop notification - and pauses whatever you're
-playing with an overlay that says exactly who wants what. The games are
+input - an overlay in the game, a desktop notification when you're looking
+elsewhere, and a small background process so that keeps working with every
+window closed - and pauses whatever you're playing with a one-line notice
+that says exactly who wants what. The games are
 instant to pick up and easy to put down, so you never miss a turn-taking
 cue while lost in Snake or Tetris.
 
@@ -38,6 +40,11 @@ Terminal). See [RELEASING.md](RELEASING.md) for the release pipeline.
 # home screen (first run: the setup wizard; `--setup` re-runs it,
 # `--reset` / `-r` wipes config.json and starts over)
 go run .
+
+# the headless background listener (what the "keep running in the
+# background" setup step registers to start at login; you rarely run it
+# by hand - a window starts it when it's missing)
+go run . daemon
 
 # skip the home screen and launch a game directly
 go run . --game=snake
@@ -76,15 +83,24 @@ screen or inside a game; a game receives events as `<game>.pause` commands
 carrying the overlay lines and the agent (auto-pause on) or as a top-of-
 screen banner (auto-pause off).
 
-Multiple terminalika instances can run at once, but only one may listen for
-agent events at a time - regardless of which agent(s) it watches. Launching a
-second instance with `-pi`/`-claude` (or `subscribe` in config) while another
-live instance already holds that seat asks the player whether to move
-listening to this window; declining leaves that instance running the game
-without pausing on any agent events. An instance started with neither flag
-never asks and never pauses on its own. The seat is tracked in
-`listener.json` in the user config dir, with a heartbeat so a crashed
-holder's seat is reclaimed automatically instead of asking forever.
+Only one terminalika window is open at a time: opening a second one takes
+over and the first closes itself (the new window says so), so there is
+always exactly one place to look for an agent event. The window holds the
+"listener seat" - `listener.json` in the user config dir, refreshed by a
+heartbeat so a crashed holder's seat is reclaimed automatically.
+
+With "keep terminalika running in the background" on (the default), a
+`terminalika daemon` process registered at login (XDG autostart on Linux, a
+launchd agent on macOS, the HKCU Run key on Windows) holds that seat
+whenever no window does: it runs the same agent hub and sends desktop
+notifications, goes quiet the moment a window opens, and picks up again when
+it closes. Its seat is `daemon.json`; removing that file asks it to stop, and
+`daemon.log` next to it has its few log lines.
+
+Desktop notifications have a *when*, not a *whether* (the in-game notice is
+always on; listening to no agents is how you get silence): always, only
+while no terminalika window has the terminal's focus, only while no window
+is open at all (i.e. only from the daemon), or never.
 
 The sidecar binds to the `-ws` base address. If that port is already taken
 (e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port

@@ -511,6 +511,11 @@ func (e *Engine) handleEvents() {
 			e.screen.Sync()
 		case *tcell.EventKey:
 			e.handleKey(ev)
+		case *tcell.EventInterrupt:
+			// The launcher asking this window to close (another
+			// terminalika window took over; see main.go): leave the game
+			// as if ESC had been pressed.
+			e.quit = true
 		}
 	}
 }

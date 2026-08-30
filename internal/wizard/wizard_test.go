@@ -77,7 +77,7 @@ func TestDefaultsSaveWithEnterOnly(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 
-	feed(s, enters(4)...)
+	feed(s, enters(5)...)
 	c, saved := run(t, w)
 	if !saved {
 		t.Fatal("wizard did not save")
@@ -86,8 +86,8 @@ func TestDefaultsSaveWithEnterOnly(t *testing.T) {
 	if len(ids) != 2 || ids[0] != agents.Claude || ids[1] != agents.Pi {
 		t.Errorf("AgentIDs = %v, want [claude pi]", ids)
 	}
-	if !c.Notify.Bell || !c.Notify.Desktop || !c.PauseOnEvent() {
-		t.Errorf("config = %+v", c)
+	if c.DesktopMode() != config.DesktopUnfocused || !c.PauseOnEvent() || !c.Background {
+		t.Errorf("config = %+v; want the recommended defaults (unfocused, pause, background)", c)
 	}
 	if !config.Exists() {
 		t.Error("config file not written")
@@ -106,9 +106,11 @@ func TestTogglesAreRecorded(t *testing.T) {
 	script := []*tcell.EventKey{
 		// Agents: untick Claude (row 0), tick Aider (row 2), tick Cursor (row 3).
 		rn(' '), key(tcell.KeyDown), key(tcell.KeyDown), rn(' '), key(tcell.KeyDown), rn('x'), key(tcell.KeyEnter),
-		// Notifications: untick desktop (row 1).
-		key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
+		// Desktop notifications: pick "Never" (row 3).
+		key(tcell.KeyDown), key(tcell.KeyDown), key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
 		// Auto-pause: choose "No".
+		key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
+		// Background: choose "No".
 		key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
 		// Summary: save.
 		key(tcell.KeyEnter),
@@ -123,11 +125,50 @@ func TestTogglesAreRecorded(t *testing.T) {
 	if len(ids) != 3 || ids[0] != agents.Pi || ids[1] != agents.Aider || ids[2] != agents.Cursor {
 		t.Errorf("AgentIDs = %v, want [pi aider cursor]", ids)
 	}
-	if !c.Notify.Bell || c.Notify.Desktop {
-		t.Errorf("Notify = %+v", c.Notify)
+	if c.DesktopMode() != config.DesktopNever {
+		t.Errorf("Notify = %+v, want never", c.Notify)
 	}
 	if c.PauseOnEvent() {
 		t.Error("PauseOnEvent() = true, want false")
+	}
+	if c.Background {
+		t.Error("Background = true, want false")
+	}
+}
+
+func TestRerunStartsFromCurrentChoices(t *testing.T) {
+	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
+	s := newSim(t)
+	base := config.Default()
+	base.Notify.Desktop = config.DesktopNoWindow
+	base.Background = false
+	w := New(s, base)
+
+	// Enter straight through must keep what the file already says.
+	feed(s, enters(5)...)
+	c, saved := run(t, w)
+	if !saved {
+		t.Fatal("wizard did not save")
+	}
+	if c.DesktopMode() != config.DesktopNoWindow || c.Background {
+		t.Errorf("config = %+v; want the base choices kept", c)
+	}
+}
+
+func TestNoBellStep(t *testing.T) {
+	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
+	s := newSim(t)
+	w := New(s, config.Default())
+	w.step = stepDesktop
+	w.draw()
+	text := screenText(s)
+	if strings.Contains(strings.ToLower(text), "bell") {
+		t.Errorf("the wizard must not offer a bell:\n%s", text)
+	}
+	for _, want := range []string{"isn't focused (Recommended)", "Always", "no terminalika window is open", "Never"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q missing:\n%s", want, text)
+		}
 	}
 }
 
@@ -149,7 +190,7 @@ func TestReleaseEventsAreIgnored(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 	// A marked release of Space must not toggle anything back.
-	feed(s, append([]*tcell.EventKey{rn(' '), release(' ')}, enters(4)...)...)
+	feed(s, append([]*tcell.EventKey{rn(' '), release(' ')}, enters(5)...)...)
 	c, _ := run(t, w)
 	if c.HasAgent(agents.Claude) {
 		t.Error("Claude should have been unticked exactly once")
@@ -166,7 +207,7 @@ func TestSmallTerminalKeepsEveryOptionVisible(t *testing.T) {
 		w := New(s, config.Default())
 		w.draw()
 		text := screenText(s)
-		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 1 of 4", "Space toggle"} {
+		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 1 of 5", "Space toggle"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%dx%d: %q missing:\n%s", size[0], size[1], want, text)
 			}
