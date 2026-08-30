@@ -62,8 +62,8 @@ func New(screen tcell.Screen, base config.Config) *Wizard {
 	w.desktop.Single = true
 	w.desktop.Items = []ui.Item{
 		{Label: "When terminalika isn't focused (Recommended)", Hint: "the overlay has you covered while you're looking", Value: string(config.DesktopUnfocused)},
-		{Label: "Always", Hint: "every event, focused or not", Value: string(config.DesktopAlways)},
 		{Label: "Only when no terminalika window is open", Hint: "needs the background process (next step)", Value: string(config.DesktopNoWindow)},
+		{Label: "Always", Hint: "every event, focused or not", Value: string(config.DesktopAlways)},
 		{Label: "Never", Hint: "in-game overlay only", Value: string(config.DesktopNever)},
 	}
 	selectValue(&w.desktop, string(base.DesktopMode()))
