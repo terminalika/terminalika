@@ -1,123 +1,177 @@
 # terminalika
 
-Terminalika is an event-driven AI focus hub, notification listener and
-retro game library for people who work with CLI AI agents. Pick the agents
-to monitor (Claude Code, Pi Agent, Aider, Cursor CLI) in the first-run
-wizard, and terminalika tells you the moment one finishes or needs your
-input - an overlay in the game, a desktop notification when you're looking
-elsewhere, and a small background process so that keeps working with every
-window closed - and pauses whatever you're playing with a one-line notice
-that says exactly who wants what. The games are
-instant to pick up and easy to put down, so you never miss a turn-taking
-cue while lost in Snake or Tetris.
+Terminalika is an event-driven focus hub for people who work with CLI AI
+agents. It listens to the agents you pick (Claude Code, Pi Agent, Aider,
+Cursor CLI), tells you the moment one finishes or needs your input, and
+keeps a library of retro games on hand for the wait - pausing whatever
+you're playing with a one-line notice that says exactly who wants what.
+The games are deliberately easy to drop: the point is to stay in the
+terminal for a 30-second wait instead of losing 20 minutes to a browser
+tab.
 
-This repo is the standalone CLI - the setup wizard, the home screen, the
-multi-agent event hub and its watchers, the webhook ingest, the notifier,
-the game loop/engine, keybindings and the optional WebSocket sidecar. The
-games themselves (Snake, Tetris, Space Invaders, Pong) and the engine
-contract live in the separate
-[`terminalika-core`](https://github.com/terminalika/terminalika-core) library,
-which this CLI imports as a normal Go dependency.
+Marketing pitch, install matrix and docs: **[terminalika.dev](https://terminalika.dev)**.
+This file is the technical reference for the CLI.
+
+## What's in this repo
+
+| Package                 | Role                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `main.go`               | Flags, subcommands (`daemon`, `notify`, `setup`, `reset`), the app loop, screen wrapper.  |
+| `internal/wizard`       | First-run setup (agents, desktop-notification mode, auto-pause, background process).     |
+| `internal/config`       | `config.json` schema v3, load/save, v2 migration.                                        |
+| `internal/agents`       | Agent catalogue and the normalised `Event` (`finished` / `input_required`).              |
+| `internal/hub`          | Runs every source concurrently, fans events out, dedupes, tracks the one current notice. |
+| `internal/sources`      | Builds sources: Claude Code / pi transcript tails, Aider history tail, webhook ingest.    |
+| `internal/claudesession`, `internal/pisession`, `internal/aiderhistory` | The native watchers.                                    |
+| `internal/webhook`      | Local HTTP ingest (`hub.json`) and the `terminalika notify` client.                       |
+| `internal/notify`       | Desktop notifications (`notify-send` / `osascript` / PowerShell) gated by a mode.         |
+| `internal/listener`     | Heartbeat seat files: the listener seat (one reacting process) and the daemon seat.       |
+| `internal/daemon`       | The headless background process and how a window spawns/stops it.                        |
+| `internal/autostart`    | Login registration: XDG autostart, launchd agent, HKCU `Run` key.                        |
+| `internal/home`         | Home screen: Pixelify-Sans pixel title, library, fuzzy launch, event toast.                |
+| `internal/engine`       | Game loop, global keys, pause/game-over notices, banners, key-release synthesis.          |
+| `internal/keystate`     | Kitty keyboard protocol / win32-input-mode key releases.                                 |
+| `internal/wsserver`, `internal/sidecar` | Optional WebSocket sidecar and its published address.                     |
+
+The games (Snake, Tetris, Space Invaders, Pong) and the engine contract live
+in [`terminalika-core`](https://github.com/terminalika/terminalika-core),
+imported as a normal Go dependency.
 
 ## Install
 
 Prebuilt packages and binaries (Homebrew, Scoop, `.deb`/`.rpm`/`.pkg.tar.zst`/
-`.apk`, raw `tar.gz`/`zip`) are documented on
-**[terminalika.dev/install](https://terminalika.dev/install/)**.
+`.apk`, raw `tar.gz`/`zip`): **[terminalika.dev/install](https://terminalika.dev/install/)**.
 
-To build from source instead (Go 1.24+):
+From source (Go 1.24+):
 
 ```sh
 go install github.com/terminalika/terminalika@latest
 ```
 
-On Windows you need Windows 10+ and a VT-capable terminal (Windows
-Terminal). See [RELEASING.md](RELEASING.md) for the release pipeline.
+Windows needs Windows 10+ and a VT-capable terminal (Windows Terminal). See
+[RELEASING.md](RELEASING.md) for the release pipeline.
 
 ## Run
 
 ```sh
-# home screen (first run: the setup wizard; `--setup` re-runs it,
-# `--reset` / `-r` wipes config.json and starts over)
-go run .
+terminalika                      # home screen; first run = setup wizard
+terminalika setup                # re-run the wizard (also --setup)
+terminalika reset                # wipe config.json and start over (also --reset / -r)
+terminalika --game=tetris        # skip the home screen (snake, tetris, invaders, pong)
+terminalika --agents=claude,aider   # listen to these agents for this run only
+terminalika --ws=""              # disable the WebSocket sidecar (default 127.0.0.1:8080)
 
-# the headless background listener (what the "keep running in the
-# background" setup step registers to start at login; you rarely run it
-# by hand - a window starts it when it's missing)
-go run . daemon
-
-# skip the home screen and launch a game directly
-go run . --game=snake
-go run . --game=tetris
-go run . --game=invaders
-go run . --game=pong
-
-# also open the WebSocket sidecar (default 127.0.0.1:8080; use -ws="" to disable)
-go run . --game=snake --ws=127.0.0.1:8080
-
-# listen to a specific set of agents for this run
-go run . --agents=claude,aider
-
-# deliver an event from an agent's hook (see terminalika.dev/events)
-go run . notify --agent cursor --kind input_required
+terminalika daemon               # headless background listener (see "Processes")
+terminalika notify --agent cursor --kind input_required   # deliver an event from a hook
 ```
 
-### Home screen
+## Setup wizard
 
-The landing screen takes over the terminal (alternate screen buffer, sized
-to the window) and shows only an animated ASCII hero plus one prompt line.
-Start typing a game name for the fuzzy-search overlay and press Enter to
-launch; press `↓` to slide the hero up and reveal the game library with
-previews and best scores. Agent events show as a toast in the corner.
+Five steps, all answerable with Enter for the recommended defaults:
 
-### Agent event hub
+1. **Agents** - any of Claude Code, Pi Agent, Aider, Cursor CLI.
+2. **Desktop notifications, when?** - `unfocused` (recommended: only while the
+   terminalika window doesn't have focus), `always`, `no_window` (only from
+   the background process), `never`.
+3. **Auto-pause** - freeze the game with a centred notice (recommended), or
+   keep playing and show a corner banner.
+4. **Background** - keep `terminalika daemon` running from login (recommended).
+5. Summary, then save.
 
-`internal/agents` is the catalogue and the normalised event type (two kinds:
-`finished`, `input_required`). `internal/hub` runs one source per selected
-agent concurrently and fans events out to the notifier, the home screen and
-the running game's engine. Sources (`internal/sources`) wrap the Claude
-Code / pi transcript tails, the Aider history tail (`internal/aiderhistory`)
-and the local webhook ingest (`internal/webhook`, whose address is
-published to `hub.json`). The hub keeps running whether you are on the home
-screen or inside a game; a game receives events as `<game>.pause` commands
-carrying the overlay lines and the agent (auto-pause on) or as a top-of-
-screen banner (auto-pause off).
+There is no in-game "notify or not" switch and no bell: the in-game notice
+is always on, and listening to no agents is the way to get silence.
 
-Only one terminalika window is open at a time: opening a second one takes
-over and the first closes itself (the new window says so), so there is
-always exactly one place to look for an agent event. The window holds the
-"listener seat" - `listener.json` in the user config dir, refreshed by a
-heartbeat so a crashed holder's seat is reclaimed automatically.
+## config.json
 
-With "keep terminalika running in the background" on (the default), a
-`terminalika daemon` process registered at login (XDG autostart on Linux, a
-launchd agent on macOS, the HKCU Run key on Windows) holds that seat
-whenever no window does: it runs the same agent hub and sends desktop
-notifications, goes quiet the moment a window opens, and picks up again when
-it closes. Its seat is `daemon.json`; removing that file asks it to stop, and
-`daemon.log` next to it has its few log lines.
+`~/.config/terminalika/config.json` (Linux), `~/Library/Application Support/terminalika/`
+(macOS), `%AppData%\terminalika\` (Windows); `TERMINALIKA_CONFIG_DIR`
+overrides. Schema version 3:
 
-Desktop notifications have a *when*, not a *whether* (the in-game notice is
-always on; listening to no agents is how you get silence): always, only
-while no terminalika window has the terminal's focus, only while no window
-is open at all (i.e. only from the daemon), or never.
-
-The sidecar binds to the `-ws` base address. If that port is already taken
-(e.g. by another project or Docker), it tries `+1`, `+2`, ... until a free port
-is found. The resolved address is written to `ws.json` in the user config dir
-(never printed to the terminal, which is in fullscreen/raw mode while a game
-runs):
-
-```json
-{"game":"snake","addr":"127.0.0.1:8081","url":"ws://127.0.0.1:8081"}
+```jsonc
+{
+  "version": 3,
+  "agents": ["claude", "pi"],          // claude, pi, aider, cursor
+  "notify": {
+    "desktop": "unfocused"             // never | no_window | unfocused | always
+  },
+  "auto_pause": true,                  // omit = true
+  "background": true,                  // run `terminalika daemon` from login
+  "webhook": { "disabled": false, "addr": "" },   // ingest; empty addr = 127.0.0.1:7788
+  "claude": { "dir": "", "session": "", "message": "" },
+  "pi":     { "dir": "", "session": "", "message": "" },
+  "aider":  { "dir": "", "history": "" }
+}
 ```
 
-`ws.json` is a single shared file, so running several instances at once with
-the sidecar enabled makes each overwrite the others' entry; if you need to
-observe more than one instance's sidecar, run the rest with `-ws=""` or
-discover their ports another way.
+- `notify.desktop` accepts the v2 booleans too: `true` → `always`, `false` →
+  `never`. A v2 `notify.bell` is ignored.
+- `<agent>.message` replaces the one-line in-game notice for that agent's
+  `finished` events (default: *Claude Code's done - you're up.*).
+- `<agent>.dir` scopes the watcher to the agent running in that project;
+  `session` / `history` pin one file. Legacy `"claude": {"subscribe": true}`
+  still enables an agent.
+- Runtime files next to it: `scores.json`, `hub.json` (ingest address),
+  `ws.json` (sidecar address), `listener.json`, `daemon.json`, `daemon.log`.
 
-### Key releases
+## Events
+
+Two kinds, from any source:
+
+| Kind             | Detected by                                                                  | On screen                                            |
+| ---------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `finished`       | assistant turn with a terminal stop reason (`end_turn`, `stop`); Aider reply | *Claude Code's done - you're up.*                    |
+| `input_required` | the turn ends on a question / permission prompt; hook `Notification` events  | *Claude Code has a question - don't leave it hanging.* |
+
+Native watchers tail the agents' own transcript files (`~/.claude/projects`,
+`~/.pi/agent/sessions`, `.aider.chat.history.md`); only entries appended
+after start count, and subagent transcripts / tool-call turns are ignored.
+Anything else posts to the local ingest: `terminalika notify --agent <id>
+[--kind ...] [--detail ...]` reads hook JSON on stdin (Claude Code, Cursor)
+and infers the kind. The hub drops a repeat of the same agent+kind inside 3 s.
+
+Delivery: with auto-pause on, the running game gets `<game>.pause` with the
+notice line and the agent (for its colour); the engine draws it centred and
+SPACE resumes. With auto-pause off, a 6-second banner in the top-right
+corner. On the home screen, a toast. Whichever screen shows an event marks
+it *seen* on the hub (`hub.Current` / `MarkSeen`): one event is shown once,
+and never again anywhere - leaving a game after dismissing the notice does
+not bring it back as a toast. Desktop notifications go out in parallel
+according to `notify.desktop`.
+
+## Processes
+
+Only one terminalika window is open at a time. Every window claims the
+**listener seat** (`listener.json`, heartbeat every 2 s, stale after 5 s);
+the previous window notices on its next heartbeat and closes itself (the
+new window shows a notice saying it did). The seat holder is the one process
+reacting to events; it also rewrites `hub.json` so `terminalika notify`
+reaches it.
+
+`terminalika daemon` is the headless twin: same hub, same notifier, no
+screen. It holds its own **daemon seat** (`daemon.json`; a second daemon
+exits at once; deleting the file asks it to stop) and takes the listener
+seat only while no window holds it - so it delivers desktop notifications
+between windows and from login, and goes quiet the moment a window opens.
+With `background: true` a window installs the login entry
+(`~/.config/autostart/terminalika.desktop`, `~/Library/LaunchAgents/dev.terminalika.daemon.plist`,
+or `HKCU\...\Run\terminalika`), (re)starts the daemon when the wizard saves,
+and spawns a missing one on start. `background: false` removes the entry and
+stops the daemon.
+
+The `unfocused` notification mode uses terminal focus events (tcell
+`EnableFocus`), tracked by a screen wrapper in `main.go`; the daemon counts
+as never focused.
+
+## Home screen
+
+The landing screen takes over the terminal and shows an animated title -
+the lowercase word *terminalika* in Pixelify Sans, sampled from the font's
+own pixel grid and drawn with half-block runes so the pixels come out
+square - over a snake chasing its food along the underline. Type to fuzzy-
+search a game, Enter to launch, `↓` to reveal the library with previews
+and best scores.
+
+## Key releases
 
 Terminals normally only report key presses; holding a key just produces the
 terminal's auto-repeat (one event, a pause, then a burst), which makes
@@ -126,13 +180,12 @@ continuous movement feel sticky. At start the launcher asks the terminal
 [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
 If it does, tcell's tty is wrapped (`internal/keystate`): the wrapper asks
 for the protocol's *report event types* flag, pulls the key release
-sequences out of the input stream before tcell (which doesn't understand
-them) sees them, rewrites repeats into plain presses and re-injects each
-release as a press of the same key marked with a Hyper modifier
-(`keystate.ReleaseMod`), so it goes through tcell's own queue in order with
-the presses; the engine turns those back into releases for games implementing
-`core.KeyStateHandler`. On Windows, Windows Terminal's win32-input-mode
-key-ups are used the same way.
+sequences out of the input stream before tcell sees them, rewrites repeats
+into plain presses and re-injects each release as a press of the same key
+marked with a Hyper modifier (`keystate.ReleaseMod`), so it goes through
+tcell's own queue in order with the presses; the engine turns those back
+into releases for games implementing `core.KeyStateHandler`. On Windows,
+Windows Terminal's win32-input-mode key-ups are used the same way.
 
 Terminals with real key releases: kitty, foot, Ghostty, Alacritty, WezTerm
 (`enable_kitty_keyboard = true`), iTerm2, Konsole, Rio, Windows Terminal;
@@ -141,19 +194,16 @@ tmux passes the protocol through with `extended-keys` on. Without support
 shown once at start and the engine synthesises a release ~120 ms after a
 key's last press or auto-repeat.
 
-### WebSocket protocol
+## WebSocket sidecar
 
-Connect to `/` on the `-ws` address. Both directions use JSON text frames with
-a top-level `kind` field.
-
-Client → server:
+`--ws` binds a sidecar (default `127.0.0.1:8080`; a taken port is skipped
+forward; the resolved address is written to `ws.json`). Connect to `/`;
+both directions are JSON text frames with a top-level `kind`:
 
 ```json
 {"kind":"list_commands"}
 {"kind":"command", "id":"c1", "type":"snake.set_direction", "payload":{"direction":"up"}}
 ```
-
-Server → client:
 
 ```json
 {"kind":"command_list", "commands":[{"name":"snake.set_direction", "description":"..."}]}
@@ -161,163 +211,40 @@ Server → client:
 {"kind":"error", "code":"unknown_kind", "message":"..."}
 ```
 
-Commands that fail produce a `command.rejected` event carrying the command's
-correlation id. Spontaneous events (keyboard/timer driven) carry no
-`correlation_id`.
+Failed commands produce `command.rejected` with the command's correlation
+id; spontaneous events carry none. `<game>.pause` accepts an optional
+`reason` (shown when no `lines` are given) so other clients can pause with
+a message of their own.
 
-## pi subscription
+## Development
 
-The launcher can subscribe to pi sessions and pause the game when the agent
-settles. Pi appends entries to its session files live, so terminalika tails
-them — no separate bridge process and no pi server mode needed. It works on
-Linux, macOS and Windows.
-
-The session directory follows pi's own resolution: `~/.pi/agent/sessions` by
-default, `PI_CODING_AGENT_SESSION_DIR` overrides it directly, and
-`PI_CODING_AGENT_DIR` moves the whole agent dir (sessions then live in
-`<dir>/sessions`).
-
-By default **any** session of **any** running pi triggers the pause. To
-restrict it, set `dir` or `session` in the config.
-
-Enable it with the `-pi` flag or in `~/.config/terminalika/config.json`:
+`terminalika` depends on `terminalika-core` as a published module. To work
+on both, clone them side by side and use a Go workspace (local-only, don't
+commit it):
 
 ```sh
-# enable via flag
-go run . --game=snake -pi
-
-# or via config (either one is enough)
-cat > ~/.config/terminalika/config.json <<'EOF'
-{"pi":{"subscribe":true}}
-EOF
-go run . --game=snake
-```
-
-Config fields under `pi`:
-
-- `subscribe` (bool): enable the subscription (OR-ed with `-pi`).
-- `dir` (string, optional): restrict to sessions of the pi running in this
-  project directory. Unset = every project.
-- `session` (string, optional): explicit session file path; overrides `dir`.
-- `message` (string, optional): pause overlay text shown after the fixed
-  `Paused: ` prefix. Defaults to `PI's done, you're up.`.
-
-```jsonc
-// example: only react to pi running in this one directory, with a custom message
-{"pi": {"subscribe": true, "dir": "/home/me/my-project", "message": "PI's out, over to you"}}
-```
-
-Event watched: a new assistant message with a terminal `stopReason` (e.g.
-`stop`) → `<game>.pause`. Assistant messages that are still calling tools
-(`stopReason: "toolUse"`) are ignored. Only entries appended after the game
-starts count; existing history is skipped.
-
-The pause command is sent with a `reason` payload, so the game's pause overlay
-reads `Paused: PI's done, you're up.` (or your custom `message`). The
-`<game>.pause` commands (`snake.pause`, `pong.pause`, ...) also accept an
-optional `reason` field for any other client:
-
-```json
-{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused: PI's done, you're up."}}
-```
-
-## Claude Code subscription
-
-The launcher can also subscribe to Claude Code sessions, the same way it does
-for pi: it tails Claude Code's own session files and pauses the game when the
-agent settles, no separate bridge process needed.
-
-The session directory follows Claude Code's own layout:
-`~/.claude/projects` by default, or `<dir>/projects` when
-`CLAUDE_CONFIG_DIR` is set.
-
-By default **any** session of **any** running Claude Code instance triggers
-the pause (a session's own subagent transcripts are never watched directly).
-To restrict it, set `dir` or `session` in the config.
-
-Enable it with the `-claude` flag or in `~/.config/terminalika/config.json`:
-
-```sh
-# enable via flag
-go run . --game=snake -claude
-
-# or via config (either one is enough)
-cat > ~/.config/terminalika/config.json <<'EOF'
-{"claude":{"subscribe":true}}
-EOF
-go run . --game=snake
-```
-
-Config fields under `claude`:
-
-- `subscribe` (bool): enable the subscription (OR-ed with `-claude`).
-- `dir` (string, optional): restrict to sessions of the Claude Code instance
-  running in this project directory. Unset = every project.
-- `session` (string, optional): explicit session file path; overrides `dir`.
-- `message` (string, optional): pause overlay text shown after the fixed
-  `Paused: ` prefix. Defaults to `Claude's done, you're up.`.
-
-```jsonc
-// example: only react to Claude Code running in this one directory, with a custom message
-{"claude": {"subscribe": true, "dir": "/home/me/my-project", "message": "Claude's out, over to you"}}
-```
-
-Event watched: a new assistant message with a terminal `stop_reason` (e.g.
-`end_turn`) → `<game>.pause`. Assistant messages that are still calling tools
-(`stop_reason: "tool_use"`) are ignored. Only entries appended after the game
-starts count; existing history is skipped.
-
-The pause command is sent with a `reason` payload, so the game's pause overlay
-reads `Paused: Claude's done, you're up.` (or your custom `message`):
-
-```json
-{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused: Claude's done, you're up."}}
-```
-
-Both subscriptions can be enabled at the same time (`-pi -claude`); either
-agent settling pauses the game.
-
-## Local development
-
-`terminalika` depends on `github.com/terminalika/terminalika-core` as a
-published module, so it builds standalone. To work on both at once, clone the
-two repos side by side and use a Go workspace:
-
-```sh
-mkdir terminalika-dev && cd terminalika-dev
 git clone git@github.com:terminalika/terminalika-core.git
 git clone git@github.com:terminalika/terminalika.git
-
-# create a workspace that links the local core into the launcher
 go work init ./terminalika ./terminalika-core
+cd terminalika && go build ./... && go test ./...
 ```
 
-The generated `go.work` looks like this (and is local-only, don't commit it):
+For SSH-only fetching: `git config --global url."git@github.com:".insteadOf "https://github.com/"`
+and `go env -w GOPRIVATE=github.com/terminalika/*`.
 
-```
-go 1.24.0
+## Recent changes
 
-use (
-	./terminalika
-	./terminalika-core
-)
-```
-
-From now on, `cd terminalika && go build ./...` uses the sibling
-`terminalika-core` checkout instead of the published version.
-
-The repos are public, so `go get` / `go install` work out of the box. For
-local development over SSH, configure Go to fetch them directly and skip the
-public module proxy:
-
-```sh
-git config --global url."git@github.com:".insteadOf "https://github.com/"
-go env -w GOPRIVATE=github.com/terminalika/*
-```
-
-## Test
-
-```sh
-cd terminalika
-go test ./...
-```
+- **Notices are one short line**, shown once. The three-line overlay with
+  `[SPACE] resume · [ESC] back to menu` and the `[INPUT REQUIRED]` /
+  `[AGENT READY]` tags are gone; games no longer append the event to their
+  status bar; an event dismissed in a game never resurfaces as a home toast.
+- **Bell removed.** Desktop notifications got a *when* instead
+  (`notify.desktop`: `never` / `no_window` / `unfocused` / `always`);
+  config schema is v3 with automatic v2 mapping.
+- **`terminalika daemon`** + `background` setting: login autostart on Linux,
+  macOS and Windows; a window spawns a missing daemon and hands it the
+  listener seat on exit.
+- **One window at a time.** A new window takes over; the previous one
+  closes itself. The old "move listening here?" dialog is gone.
+- **Home screen title** is lowercase Pixelify Sans; the underline snake has
+  a round head, a tongue and a tapered tail.
