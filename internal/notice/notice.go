@@ -13,7 +13,10 @@ func Show(screen tcell.Screen, lines []string) {
 		s.Clear()
 		w, h := s.Size()
 
-		titleStyle := tcell.StyleDefault.Foreground(tcell.ColorOrange).Bold(true)
+		// Aqua is terminalika's own brand/system color, reserved for
+		// messages from the launcher itself - distinct from a game's own
+		// dark red and an agent's color (see engine.noticeStyleForAgent).
+		titleStyle := tcell.StyleDefault.Foreground(tcell.ColorAqua).Bold(true)
 		textStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 		hintStyle := tcell.StyleDefault.Foreground(tcell.ColorGray)
 
