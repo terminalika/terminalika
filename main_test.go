@@ -115,9 +115,10 @@ func TestResolveAgentsFlagOverridesConfigAndShorthandsAdd(t *testing.T) {
 	}
 }
 
-func TestPauseCommandCarriesOverlayLinesAndAgent(t *testing.T) {
+func TestPauseCommandCarriesOverlayLineAndAgent(t *testing.T) {
 	claude, _ := agents.Lookup("claude")
-	cmd := pauseCommand("snake", agents.Event{Agent: claude, Kind: agents.InputRequired})
+	ev := agents.Event{Agent: claude, Kind: agents.InputRequired}
+	cmd := pauseCommand("snake", ev)
 	if cmd.Type != "snake.pause" {
 		t.Errorf("Type = %q", cmd.Type)
 	}
@@ -130,17 +131,22 @@ func TestPauseCommandCarriesOverlayLinesAndAgent(t *testing.T) {
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Agent != "claude" || p.Kind != "input_required" || p.Reason != "Claude Code needs your input!" {
+	if p.Agent != "claude" || p.Kind != "input_required" {
 		t.Errorf("payload = %+v", p)
 	}
-	if len(p.Lines) != 3 || p.Lines[0] != "[INPUT REQUIRED: Claude Code]" {
-		t.Errorf("lines = %q", p.Lines)
+	if len(p.Lines) != 1 || p.Lines[0] != ev.Message() {
+		t.Errorf("lines = %q, want just %q", p.Lines, ev.Message())
+	}
+	// No "reason": games append it to their own status bar, which would
+	// show the event a second time next to the overlay.
+	if p.Reason != "" {
+		t.Errorf("reason = %q, want none", p.Reason)
 	}
 
 	pi, _ := agents.Lookup("pi")
 	cmd = pauseCommand("pong", agents.Event{Agent: pi, Kind: agents.Finished, Detail: "PI's out, you're up"})
 	_ = json.Unmarshal(cmd.Payload, &p)
-	if p.Lines[0] != "[AGENT READY: Pi Agent]" || p.Lines[1] != "PI's out, you're up" {
+	if len(p.Lines) != 1 || p.Lines[0] != "PI's out, you're up" {
 		t.Errorf("custom message lines = %q", p.Lines)
 	}
 }

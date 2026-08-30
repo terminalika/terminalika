@@ -41,6 +41,8 @@ type Hub struct {
 	subs    map[chan agents.Event]struct{}
 	last    map[agents.ID]agents.Event
 	latest  *agents.Event
+	seq     uint64
+	seen    uint64 // Seq of the newest event a screen has shown (see Current)
 	cancel  context.CancelFunc
 	done    chan struct{}
 	muted   bool
@@ -157,6 +159,8 @@ func (h *Hub) Emit(ev agents.Event) {
 		h.mu.Unlock()
 		return
 	}
+	h.seq++
+	ev.Seq = h.seq
 	h.last[ev.Agent.ID] = ev
 	h.latest = &ev
 	subs := make([]chan agents.Event, 0, len(h.subs))
@@ -198,4 +202,30 @@ func (h *Hub) Latest() (agents.Event, bool) {
 		return agents.Event{}, false
 	}
 	return *h.latest, true
+}
+
+// Current returns the one notification the player should be looking at:
+// the most recent event, unless a screen has already shown it (see
+// MarkSeen). There is only ever one - a newer event simply replaces an
+// older unseen one, and an event that was shown anywhere is never offered
+// again anywhere else, so closing the pause overlay in a game and walking
+// back to the home screen doesn't produce a second toast for the same
+// thing.
+func (h *Hub) Current() (agents.Event, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.latest == nil || h.latest.Seq <= h.seen {
+		return agents.Event{}, false
+	}
+	return *h.latest, true
+}
+
+// MarkSeen records that ev (and everything before it) has been shown to
+// the player, retiring it from Current.
+func (h *Hub) MarkSeen(ev agents.Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if ev.Seq > h.seen {
+		h.seen = ev.Seq
+	}
 }

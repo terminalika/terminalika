@@ -139,7 +139,7 @@ func main() {
 		return
 	}
 
-	h := home.New(screen, registry.Names(), app.homeEvents, app.status)
+	h := home.New(screen, registry.Names(), app.hub, app.status)
 	for {
 		name, ok := h.Run()
 		if !ok {
@@ -198,7 +198,6 @@ type app struct {
 	seat     *listener.Seat
 	set      sources.Set
 
-	homeEvents chan agents.Event
 	notifyDone chan struct{}
 	notifyCh   chan agents.Event
 }
@@ -241,7 +240,6 @@ func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID) *app {
 		}
 	}()
 
-	a.homeEvents = a.hub.Subscribe()
 	a.hub.Start()
 	return a
 }
@@ -454,22 +452,39 @@ func (a *app) runGame(releases bool, support keystate.Support, registry *core.Re
 
 // bridge subscribes the running game to the hub: every agent event pauses
 // the game with an attributed overlay (auto-pause on) or flashes a banner
-// over it (auto-pause off). It returns a stop function.
+// over it (auto-pause off). Showing an event in the game marks it seen on
+// the hub, so it's the one place the player meets it: leaving the game
+// afterwards doesn't bring it back as a toast on the home screen. An event
+// that arrived in the gap between the home screen and the game starting
+// is delivered first, for the same reason. It returns a stop function.
 func (a *app) bridge(game string, eng *engine.Engine) func() {
 	if !a.hub.Running() {
 		return func() {}
 	}
-	ch := a.hub.Subscribe()
 	autoPause := a.cfg.PauseOnEvent()
+	var shown uint64 // Seq of the last event shown, so the catch-up below and the subscription can't both show one
+	show := func(ev agents.Event) {
+		if ev.Seq <= shown {
+			return
+		}
+		shown = ev.Seq
+		if autoPause {
+			eng.SendCommand(pauseCommand(game, ev))
+		} else {
+			eng.Flash([]string{ev.Message()}, string(ev.Agent.ID))
+		}
+		a.hub.MarkSeen(ev)
+	}
+
+	ch := a.hub.Subscribe()
+	if ev, ok := a.hub.Current(); ok {
+		show(ev)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for ev := range ch {
-			if autoPause {
-				eng.SendCommand(pauseCommand(game, ev))
-			} else {
-				eng.Flash([]string{ev.Tag(), ev.Title()}, string(ev.Agent.ID))
-			}
+			show(ev)
 		}
 	}()
 	return func() {
@@ -480,22 +495,17 @@ func (a *app) bridge(game string, eng *engine.Engine) func() {
 }
 
 // pauseCommand is the "<game>.pause" command an agent event turns into:
-// the overlay lines the engine shows, the agent (for its color), and a
-// one-line reason for observers.
+// the one overlay line the engine shows, the agent (for its color) and the
+// kind. It deliberately carries no "reason": games append that to their
+// own status bar ("SCORE: 3 - Claude Code needs your input!"), which would
+// be a second copy of the same notice - the overlay is the one and only.
 func pauseCommand(game string, ev agents.Event) core.Command {
-	lines := ev.OverlayLines()
-	if ev.Kind == agents.Finished && ev.Detail != "" {
-		// A custom per-agent message from config.json replaces the middle
-		// line ("Your AI Agent has finished.").
-		lines[1] = ev.Detail
-	}
 	return core.Command{
 		Type: game + ".pause",
 		Payload: core.MustJSON(map[string]any{
-			"reason": ev.Title(),
-			"agent":  string(ev.Agent.ID),
-			"kind":   ev.Kind.String(),
-			"lines":  lines,
+			"agent": string(ev.Agent.ID),
+			"kind":  ev.Kind.String(),
+			"lines": []string{ev.Message()},
 		}),
 	}
 }

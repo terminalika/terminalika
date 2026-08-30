@@ -67,11 +67,22 @@ type toast struct {
 	until time.Time
 }
 
+// Feed is where the home screen gets agent events from: the hub. Current
+// is the one event the player hasn't been shown yet, if any - polled every
+// frame rather than received on a channel, so an event the player already
+// met inside a game (and marked seen there) never resurfaces here as a
+// toast. Latest is for the passive "last event" line.
+type Feed interface {
+	Current() (agents.Event, bool)
+	MarkSeen(agents.Event)
+	Latest() (agents.Event, bool)
+}
+
 // Home is the landing screen.
 type Home struct {
 	screen tcell.Screen
 	games  []string
-	events <-chan agents.Event
+	feed   Feed
 	status func() Status
 	scores map[string]int
 
@@ -98,18 +109,17 @@ type Home struct {
 	msel    int
 
 	toast *toast
-	last  *agents.Event
 }
 
-// New creates the home screen. events may be nil when no agent hub runs.
-func New(screen tcell.Screen, games []string, events <-chan agents.Event, status func() Status) *Home {
+// New creates the home screen. feed may be nil when no agent hub runs.
+func New(screen tcell.Screen, games []string, feed Feed, status func() Status) *Home {
 	if status == nil {
 		status = func() Status { return Status{} }
 	}
 	return &Home{
 		screen:   screen,
 		games:    games,
-		events:   events,
+		feed:     feed,
 		status:   status,
 		now:      time.Now,
 		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -166,21 +176,19 @@ func (h *Home) loadScores() {
 	}
 }
 
-// pollHub adopts any agent event waiting on the channel as the toast.
+// pollHub adopts the hub's current unseen event, if any, as the toast, and
+// marks it seen right away: from here on nothing shows it again, not even
+// this screen after the toast is dismissed or times out.
 func (h *Home) pollHub() {
-	if h.events == nil {
+	if h.feed == nil {
 		return
 	}
-	for {
-		select {
-		case ev := <-h.events:
-			e := ev
-			h.last = &e
-			h.toast = &toast{ev: ev, until: h.now().Add(toastFor)}
-		default:
-			return
-		}
+	ev, ok := h.feed.Current()
+	if !ok {
+		return
 	}
+	h.feed.MarkSeen(ev)
+	h.toast = &toast{ev: ev, until: h.now().Add(toastFor)}
 }
 
 // handleKey returns (game, true) to launch, ("", true) to quit, or
@@ -873,7 +881,7 @@ func (h *Home) drawToast(w int) {
 	}
 	s := h.screen
 	ev := h.toast.ev
-	lines := []string{ev.Tag(), ev.Title()}
+	lines := []string{ev.Message()}
 	width := 0
 	for _, l := range lines {
 		if n := ui.Width(l); n > width {
@@ -951,8 +959,11 @@ func (h *Home) drawBottomBar(w, hh int) {
 
 	// The last agent event sits right-aligned on the row above the bar, so
 	// it never collides with the prompt on a narrow terminal.
-	if h.last != nil && h.mode != modeSearch && hh > 6 {
-		txt := ui.Truncate("last event · "+h.last.At.Format("15:04")+" "+h.last.Title(), w-2)
+	if h.feed == nil || h.mode == modeSearch || hh <= 6 {
+		return
+	}
+	if last, ok := h.feed.Latest(); ok {
+		txt := ui.Truncate("last event · "+last.At.Format("15:04")+" "+last.Title(), w-2)
 		ui.Fill(s, w-1-ui.Width(txt)-1, y-1, ui.Width(txt)+2, 1, tcell.StyleDefault)
 		ui.Print(s, w-1-ui.Width(txt), y-1, ui.StyleDim, txt)
 	}

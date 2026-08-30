@@ -119,25 +119,74 @@ func TestEscapeAndQQuit(t *testing.T) {
 	}
 }
 
-func TestAgentEventBecomesToast(t *testing.T) {
+// fakeFeed is a Feed with one event that may or may not have been seen.
+type fakeFeed struct {
+	ev   agents.Event
+	seen uint64
+}
+
+func (f *fakeFeed) Current() (agents.Event, bool) {
+	return f.ev, f.ev.Seq > f.seen
+}
+func (f *fakeFeed) MarkSeen(ev agents.Event) {
+	if ev.Seq > f.seen {
+		f.seen = ev.Seq
+	}
+}
+func (f *fakeFeed) Latest() (agents.Event, bool) { return f.ev, true }
+
+func TestAgentEventBecomesToastOnce(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
 	s := newSim(t, 100, 30)
-	events := make(chan agents.Event, 1)
-	h := New(s, games, events, nil)
+	claude, _ := agents.Lookup("claude")
+	ev := agents.Event{Agent: claude, Kind: agents.InputRequired, At: time.Now(), Seq: 1}
+	f := &fakeFeed{ev: ev}
+	h := New(s, games, f, nil)
 	h.loadScores()
 
-	claude, _ := agents.Lookup("claude")
-	events <- agents.Event{Agent: claude, Kind: agents.InputRequired, At: time.Now()}
 	h.pollHub()
 	h.step()
 	h.draw()
 
 	text := screenText(s)
-	if !contains(text, "[INPUT REQUIRED: Claude Code]") {
+	if !contains(text, ev.Message()) {
 		t.Fatalf("toast missing; screen:\n%s", text)
 	}
-	if !contains(text, "Claude Code needs your input!") {
+	if contains(text, "[INPUT REQUIRED") {
+		t.Errorf("toast should carry only the one-line message; screen:\n%s", text)
+	}
+	if !contains(text, "last event") {
 		t.Error("last-event line missing")
+	}
+	// Showing the toast marks the event seen on the feed...
+	if f.seen != 1 {
+		t.Fatalf("seen = %d, want 1 after the toast was shown", f.seen)
+	}
+	// ...so once dismissed it doesn't come back on the next poll.
+	h.handleKey(key(tcell.KeyDown))
+	h.pollHub()
+	if h.toast != nil {
+		t.Fatal("a dismissed event must not become a toast again")
+	}
+}
+
+func TestEventSeenElsewhereIsNotToasted(t *testing.T) {
+	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
+	s := newSim(t, 100, 30)
+	claude, _ := agents.Lookup("claude")
+	ev := agents.Event{Agent: claude, Kind: agents.Finished, At: time.Now(), Seq: 1}
+	// The player already met this event inside a game (the engine bridge
+	// marked it seen): back on the home screen it must stay quiet.
+	f := &fakeFeed{ev: ev, seen: 1}
+	h := New(s, games, f, nil)
+	h.loadScores()
+
+	h.pollHub()
+	h.step()
+	h.draw()
+
+	if h.toast != nil || contains(screenText(s), ev.Message()) {
+		t.Fatalf("event seen in-game resurfaced as a toast; screen:\n%s", screenText(s))
 	}
 }
 

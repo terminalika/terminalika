@@ -113,3 +113,41 @@ func TestStartRunsSourcesUntilStop(t *testing.T) {
 		t.Error("Running() = true after Stop")
 	}
 }
+
+func TestCurrentIsOneEventShownOnce(t *testing.T) {
+	h := New()
+	base := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	if _, ok := h.Current(); ok {
+		t.Fatal("Current on an empty hub should be empty")
+	}
+
+	h.Emit(claudeEvent(agents.Finished, base))
+	ev, ok := h.Current()
+	if !ok || ev.Kind != agents.Finished || ev.Seq == 0 {
+		t.Fatalf("Current = %+v, %v; want the emitted event with a Seq", ev, ok)
+	}
+
+	// Shown somewhere (a game's pause overlay, say): gone for good, on
+	// every screen, even though it is still Latest.
+	h.MarkSeen(ev)
+	if _, ok := h.Current(); ok {
+		t.Fatal("a seen event must not be Current again")
+	}
+	if last, ok := h.Latest(); !ok || last.Seq != ev.Seq {
+		t.Errorf("Latest = %+v, %v; want the seen event to remain the last one", last, ok)
+	}
+
+	// A newer event replaces it as the one current notice; marking an
+	// older event seen doesn't retire the newer one.
+	h.Emit(claudeEvent(agents.InputRequired, base.Add(10*time.Second)))
+	h.MarkSeen(ev)
+	cur, ok := h.Current()
+	if !ok || cur.Kind != agents.InputRequired || cur.Seq <= ev.Seq {
+		t.Fatalf("Current = %+v, %v; want the newer event", cur, ok)
+	}
+	h.MarkSeen(cur)
+	if _, ok := h.Current(); ok {
+		t.Fatal("nothing should be current after the newest event was seen")
+	}
+}

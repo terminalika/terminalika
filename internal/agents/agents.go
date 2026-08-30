@@ -8,7 +8,6 @@
 package agents
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -106,6 +105,11 @@ type Event struct {
 	At     time.Time
 	Detail string // free text from the source (a hook's message, say)
 	Source string // where it was detected: "session", "webhook", "history"
+
+	// Seq is the hub's serial number for the event, stamped on emit (0
+	// before that). Screens use it to tell events apart, so that one event
+	// is shown to the player once and never again (see hub.Current).
+	Seq uint64
 }
 
 // Title is the short, notification-sized headline for the event, e.g.
@@ -128,31 +132,18 @@ func (e Event) Body() string {
 	return "Your AI agent has finished and is idle."
 }
 
-// Tag is the bracketed state label used on screen: "[INPUT REQUIRED: Claude
-// Code]" / "[AGENT READY: Claude Code]".
-func (e Event) Tag() string {
+// Message is the one line the player sees on screen for the event - the
+// in-game pause overlay, the flash banner and the home-screen toast all
+// show exactly this. It's short, names the agent, and stops there: what
+// the keys do is the game's business, not the notice's. A custom
+// per-agent message from config.json (Detail on a Finished event)
+// replaces it.
+func (e Event) Message() string {
 	if e.Kind == InputRequired {
-		return fmt.Sprintf("[INPUT REQUIRED: %s]", e.Agent.Name)
+		return e.Agent.Name + " has a question - don't leave it hanging."
 	}
-	return fmt.Sprintf("[AGENT READY: %s]", e.Agent.Name)
-}
-
-// overlayKeys is the last overlay line: what the global keys do while the
-// game is paused (SPACE resumes, ESC leaves the game for the home screen).
-const overlayKeys = "[SPACE] resume · [ESC] back to menu"
-
-// OverlayLines is the in-game pause overlay, exactly as the player sees it.
-func (e Event) OverlayLines() []string {
-	if e.Kind == InputRequired {
-		return []string{
-			e.Tag(),
-			"Your AI Agent is waiting for your response/approval!",
-			overlayKeys,
-		}
+	if e.Detail != "" {
+		return e.Detail
 	}
-	return []string{
-		e.Tag(),
-		"Your AI Agent has finished.",
-		overlayKeys,
-	}
+	return e.Agent.Name + "'s done - you're up."
 }

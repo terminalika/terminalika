@@ -38,8 +38,11 @@ func TestEventTexts(t *testing.T) {
 	if q.Title() != "Claude Code needs your input!" {
 		t.Errorf("Title = %q", q.Title())
 	}
-	if lines := q.OverlayLines(); lines[0] != "[INPUT REQUIRED: Claude Code]" || !strings.Contains(lines[2], "[SPACE]") || !strings.Contains(lines[2], "[ESC]") {
-		t.Errorf("OverlayLines = %q", lines)
+	// The on-screen message is one short line naming the agent - no key
+	// hints, no "[INPUT REQUIRED]" tag, nothing that reads like an
+	// instruction from the game itself.
+	if m := q.Message(); !strings.HasPrefix(m, "Claude Code has a question") || strings.Contains(m, "SPACE") || strings.Contains(m, "ESC") || strings.Contains(m, "[") {
+		t.Errorf("Message = %q", m)
 	}
 
 	pi, _ := Lookup("pi")
@@ -47,7 +50,15 @@ func TestEventTexts(t *testing.T) {
 	if d.Title() != "Pi Agent finished processing" {
 		t.Errorf("Title = %q", d.Title())
 	}
-	if lines := d.OverlayLines(); lines[0] != "[AGENT READY: Pi Agent]" {
-		t.Errorf("OverlayLines = %q", lines)
+	if m := d.Message(); m != "Pi Agent's done - you're up." {
+		t.Errorf("Message = %q", m)
+	}
+	// A custom per-agent message from config.json replaces the Finished
+	// line outright; a question keeps its own wording.
+	if m := (Event{Agent: pi, Kind: Finished, Detail: "PI's out, you're up"}).Message(); m != "PI's out, you're up" {
+		t.Errorf("Message with Detail = %q", m)
+	}
+	if m := (Event{Agent: pi, Kind: InputRequired, Detail: "needs permission"}).Message(); !strings.HasPrefix(m, "Pi Agent has a question") {
+		t.Errorf("InputRequired Message with Detail = %q", m)
 	}
 }
