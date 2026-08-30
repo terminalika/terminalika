@@ -69,25 +69,30 @@ func TestExpandHome(t *testing.T) {
 	}
 }
 
-func TestSettledEvent(t *testing.T) {
+func TestSettleKind(t *testing.T) {
 	cases := []struct {
 		line string
-		want bool
+		ok   bool
+		want SettleKind
 	}{
-		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn"}}`, true},
-		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"max_tokens"}}`, true},
-		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"stop_sequence"}}`, true},
-		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"refusal"}}`, true},
-		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use"}}`, false},
-		{`{"type":"assistant","message":{"role":"assistant"}}`, false}, // no stop_reason
-		{`{"type":"user","message":{"role":"user"}}`, false},
-		{`{"type":"system","subtype":"init"}`, false},
-		{`not json`, false},
-		{``, false},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn"}}`, true, SettleDone},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"max_tokens"}}`, true, SettleDone},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"stop_sequence"}}`, true, SettleDone},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"refusal"}}`, true, SettleDone},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash"}]}}`, false, 0},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use"}}`, false, 0},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"AskUserQuestion"}]}}`, true, SettleQuestion},
+		{`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"hmm"},{"type":"tool_use","name":"AskUserQuestion"}]}}`, true, SettleQuestion},
+		{`{"type":"assistant","message":{"role":"assistant"}}`, false, 0}, // no stop_reason
+		{`{"type":"user","message":{"role":"user"}}`, false, 0},
+		{`{"type":"system","subtype":"init"}`, false, 0},
+		{`not json`, false, 0},
+		{``, false, 0},
 	}
 	for _, c := range cases {
-		if got := settledEvent([]byte(c.line)); got != c.want {
-			t.Errorf("settledEvent(%q) = %v, want %v", c.line, got, c.want)
+		kind, ok := settleKind([]byte(c.line))
+		if ok != c.ok || (ok && kind != c.want) {
+			t.Errorf("settleKind(%q) = (%v, %v), want (%v, %v)", c.line, kind, ok, c.want, c.ok)
 		}
 	}
 }
@@ -126,7 +131,7 @@ func TestWatcherIgnoresHistory(t *testing.T) {
 
 	var mu sync.Mutex
 	var got int
-	w := NewWatcher(Scope{File: p}, func() { mu.Lock(); got++; mu.Unlock() })
+	w := NewWatcher(Scope{File: p}, func(SettleKind) { mu.Lock(); got++; mu.Unlock() })
 	w.interval = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -152,7 +157,7 @@ func TestWatcherDetectsSettled(t *testing.T) {
 
 	var mu sync.Mutex
 	var got int
-	w := NewWatcher(Scope{File: p}, func() { mu.Lock(); got++; mu.Unlock() })
+	w := NewWatcher(Scope{File: p}, func(SettleKind) { mu.Lock(); got++; mu.Unlock() })
 	w.interval = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -174,12 +179,54 @@ func TestWatcherDetectsSettled(t *testing.T) {
 	waitFor(t, &mu, &got, 1)
 }
 
+func TestWatcherDetectsAskUserQuestion(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(p, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var got int
+	var kinds []SettleKind
+	w := NewWatcher(Scope{File: p}, func(k SettleKind) {
+		mu.Lock()
+		got++
+		kinds = append(kinds, k)
+		mu.Unlock()
+	})
+	w.interval = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { w.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	// A Bash tool call must still be ignored: the agent is working, not
+	// waiting on the user.
+	appendLine(t, p, `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash"}]}}`)
+	time.Sleep(60 * time.Millisecond)
+	mu.Lock()
+	if n := got; n != 0 {
+		t.Fatalf("Bash tool_use triggered onSettled %d times, want 0", n)
+	}
+	mu.Unlock()
+
+	// An AskUserQuestion tool call must trigger, as SettleQuestion.
+	appendLine(t, p, `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","name":"AskUserQuestion"}]}}`)
+	waitFor(t, &mu, &got, 1)
+	mu.Lock()
+	if len(kinds) != 1 || kinds[0] != SettleQuestion {
+		t.Errorf("kinds = %v, want [SettleQuestion]", kinds)
+	}
+	mu.Unlock()
+}
+
 func TestWatcherDirectoryPicksUpNewSessions(t *testing.T) {
 	dir := t.TempDir()
 
 	var mu sync.Mutex
 	var got int
-	w := NewWatcher(Scope{Dir: dir}, func() { mu.Lock(); got++; mu.Unlock() })
+	w := NewWatcher(Scope{Dir: dir}, func(SettleKind) { mu.Lock(); got++; mu.Unlock() })
 	w.interval = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -205,7 +252,7 @@ func TestWatcherNonRecursiveSkipsSubdirs(t *testing.T) {
 
 	var mu sync.Mutex
 	var got int
-	w := NewWatcher(Scope{Dir: root, Recursive: false}, func() { mu.Lock(); got++; mu.Unlock() })
+	w := NewWatcher(Scope{Dir: root, Recursive: false}, func(SettleKind) { mu.Lock(); got++; mu.Unlock() })
 	w.interval = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -248,7 +295,7 @@ func TestWatcherRecursiveSkipsSubagentSubdir(t *testing.T) {
 
 	var mu sync.Mutex
 	var got int
-	w := NewWatcher(Scope{Dir: root, Recursive: true}, func() { mu.Lock(); got++; mu.Unlock() })
+	w := NewWatcher(Scope{Dir: root, Recursive: true}, func(SettleKind) { mu.Lock(); got++; mu.Unlock() })
 	w.interval = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())

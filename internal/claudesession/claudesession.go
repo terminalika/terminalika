@@ -111,16 +111,32 @@ func ResolveScope(opts Options) Scope {
 	return Scope{Dir: sessionsRoot(), Recursive: true}
 }
 
+// SettleKind distinguishes why the agent settled, so the caller can react
+// differently (e.g. a different pause message).
+type SettleKind int
+
+const (
+	// SettleDone means the agent finished its turn: an assistant message
+	// with a terminal stop_reason (e.g. "end_turn").
+	SettleDone SettleKind = iota
+
+	// SettleQuestion means the agent stopped to ask the user something: an
+	// assistant message with stop_reason "tool_use" whose content includes
+	// an AskUserQuestion tool call. Claude Code blocks on the user's answer
+	// exactly like it does at the end of a turn, so it counts as settled
+	// too even though stop_reason itself says "tool_use".
+	SettleQuestion
+)
+
 // Watcher tails session files in a scope and calls onSettled whenever the
-// agent finishes a run: a new assistant message whose stop_reason is not
-// "tool_use".
+// agent settles: it finishes a run, or stops to ask the user a question.
 //
 // Only entries appended after a file is first seen are considered; existing
 // history is ignored. Files that appear later (new sessions) are picked up
 // automatically.
 type Watcher struct {
 	scope     Scope
-	onSettled func()
+	onSettled func(SettleKind)
 	interval  time.Duration
 
 	tails map[string]*tail
@@ -133,7 +149,7 @@ type tail struct {
 }
 
 // NewWatcher returns a watcher for the given scope.
-func NewWatcher(scope Scope, onSettled func()) *Watcher {
+func NewWatcher(scope Scope, onSettled func(SettleKind)) *Watcher {
 	return &Watcher{
 		scope:     scope,
 		onSettled: onSettled,
@@ -221,8 +237,8 @@ func (w *Watcher) updateTail(path string) {
 }
 
 func (w *Watcher) handleLine(line []byte) {
-	if settledEvent(line) {
-		w.onSettled()
+	if kind, ok := settleKind(line); ok {
+		w.onSettled(kind)
 	}
 }
 
@@ -266,31 +282,49 @@ func listFiles(scope Scope) []string {
 	return files
 }
 
-// settledEvent reports whether a session entry line means the agent settled:
-// an assistant message whose stop_reason is a terminal one (e.g. "end_turn",
-// "max_tokens", "stop_sequence", "refusal"). "tool_use" means the agent is
-// still working, waiting on a tool result.
-func settledEvent(line []byte) bool {
+// askUserQuestionTool is the name of the built-in tool Claude Code calls to
+// ask the user a question and block on their answer.
+const askUserQuestionTool = "AskUserQuestion"
+
+// settleKind reports whether a session entry line means the agent settled,
+// and why. An assistant message with a terminal stop_reason (e.g.
+// "end_turn", "max_tokens", "stop_sequence", "refusal") means it finished a
+// turn. A stop_reason of "tool_use" normally means it's still working,
+// waiting on a tool result — except when the tool call is AskUserQuestion,
+// which blocks on the user just like the end of a turn does.
+func settleKind(line []byte) (SettleKind, bool) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
-		return false
+		return 0, false
 	}
 	var e struct {
 		Type    string `json:"type"`
 		Message struct {
 			Role       string `json:"role"`
 			StopReason string `json:"stop_reason"`
+			Content    []struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"content"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(line, &e); err != nil {
-		return false
+		return 0, false
 	}
 	if e.Type != "assistant" || e.Message.Role != "assistant" {
-		return false
+		return 0, false
 	}
 	switch e.Message.StopReason {
-	case "", "tool_use":
-		return false
+	case "":
+		return 0, false
+	case "tool_use":
+		for _, c := range e.Message.Content {
+			if c.Type == "tool_use" && c.Name == askUserQuestionTool {
+				return SettleQuestion, true
+			}
+		}
+		return 0, false
+	default:
+		return SettleDone, true
 	}
-	return true
 }

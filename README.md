@@ -1,16 +1,19 @@
 # terminalika
 
-Terminalika is a tiny terminal game launcher for developers who want
-something instant to pick up, with no learning curve, and easy to put down
-without losing focus, to do while their AI agents are working: fire it up
-alongside a coding agent, and it can pause your game automatically the moment
-the agent needs your attention, so you never miss a turn-taking cue while
-lost in Snake or Tetris.
+Terminalika is an event-driven AI focus hub, notification listener and
+retro game library for people who work with CLI AI agents. Pick the agents
+to monitor (Claude Code, Pi Agent, Aider, Cursor CLI) in the first-run
+wizard, and terminalika tells you the moment one finishes or needs your
+input - terminal bell, desktop notification - and pauses whatever you're
+playing with an overlay that says exactly who wants what. The games are
+instant to pick up and easy to put down, so you never miss a turn-taking
+cue while lost in Snake or Tetris.
 
-This repo is the standalone CLI — the menu, the game loop/engine, keybindings,
-the optional WebSocket sidecar, and the pi/Claude Code session watchers. The
-games themselves (Snake, Tetris, Space Invaders, Pong) and the engine contract
-live in the separate
+This repo is the standalone CLI - the setup wizard, the home screen, the
+multi-agent event hub and its watchers, the webhook ingest, the notifier,
+the game loop/engine, keybindings and the optional WebSocket sidecar. The
+games themselves (Snake, Tetris, Space Invaders, Pong) and the engine
+contract live in the separate
 [`terminalika-core`](https://github.com/terminalika/terminalika-core) library,
 which this CLI imports as a normal Go dependency.
 
@@ -32,10 +35,11 @@ Terminal). See [RELEASING.md](RELEASING.md) for the release pipeline.
 ## Run
 
 ```sh
-# open the game selection menu
+# home screen (first run: the setup wizard; `--setup` re-runs it,
+# `--reset` / `-r` wipes config.json and starts over)
 go run .
 
-# skip the menu and launch a game directly
+# skip the home screen and launch a game directly
 go run . --game=snake
 go run . --game=tetris
 go run . --game=invaders
@@ -43,7 +47,34 @@ go run . --game=pong
 
 # also open the WebSocket sidecar (default 127.0.0.1:8080; use -ws="" to disable)
 go run . --game=snake --ws=127.0.0.1:8080
+
+# listen to a specific set of agents for this run
+go run . --agents=claude,aider
+
+# deliver an event from an agent's hook (see terminalika.dev/events)
+go run . notify --agent cursor --kind input_required
 ```
+
+### Home screen
+
+The landing screen takes over the terminal (alternate screen buffer, sized
+to the window) and shows only an animated ASCII hero plus one prompt line.
+Start typing a game name for the fuzzy-search overlay and press Enter to
+launch; press `↓` to slide the hero up and reveal the game library with
+previews and best scores. Agent events show as a toast in the corner.
+
+### Agent event hub
+
+`internal/agents` is the catalogue and the normalised event type (two kinds:
+`finished`, `input_required`). `internal/hub` runs one source per selected
+agent concurrently and fans events out to the notifier, the home screen and
+the running game's engine. Sources (`internal/sources`) wrap the Claude
+Code / pi transcript tails, the Aider history tail (`internal/aiderhistory`)
+and the local webhook ingest (`internal/webhook`, whose address is
+published to `hub.json`). The hub keeps running whether you are on the home
+screen or inside a game; a game receives events as `<game>.pause` commands
+carrying the overlay lines and the agent (auto-pause on) or as a top-of-
+screen banner (auto-pause off).
 
 Multiple terminalika instances can run at once, but only one may listen for
 agent events at a time - regardless of which agent(s) it watches. Launching a
@@ -152,10 +183,12 @@ Config fields under `pi`:
 - `dir` (string, optional): restrict to sessions of the pi running in this
   project directory. Unset = every project.
 - `session` (string, optional): explicit session file path; overrides `dir`.
+- `message` (string, optional): pause overlay text shown after the fixed
+  `Paused: ` prefix. Defaults to `PI's done, you're up.`.
 
 ```jsonc
-// example: only react to pi running in this one directory
-{"pi": {"subscribe": true, "dir": "/home/me/my-project"}}
+// example: only react to pi running in this one directory, with a custom message
+{"pi": {"subscribe": true, "dir": "/home/me/my-project", "message": "PI's out, over to you"}}
 ```
 
 Event watched: a new assistant message with a terminal `stopReason` (e.g.
@@ -164,11 +197,12 @@ Event watched: a new assistant message with a terminal `stopReason` (e.g.
 starts count; existing history is skipped.
 
 The pause command is sent with a `reason` payload, so the game's pause overlay
-reads `Paused by PI`. The `<game>.pause` commands (`snake.pause`, `pong.pause`, ...) also accept
-an optional `reason` field for any other client:
+reads `Paused: PI's done, you're up.` (or your custom `message`). The
+`<game>.pause` commands (`snake.pause`, `pong.pause`, ...) also accept an
+optional `reason` field for any other client:
 
 ```json
-{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused by PI"}}
+{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused: PI's done, you're up."}}
 ```
 
 ## Claude Code subscription
@@ -204,10 +238,12 @@ Config fields under `claude`:
 - `dir` (string, optional): restrict to sessions of the Claude Code instance
   running in this project directory. Unset = every project.
 - `session` (string, optional): explicit session file path; overrides `dir`.
+- `message` (string, optional): pause overlay text shown after the fixed
+  `Paused: ` prefix. Defaults to `Claude's done, you're up.`.
 
 ```jsonc
-// example: only react to Claude Code running in this one directory
-{"claude": {"subscribe": true, "dir": "/home/me/my-project"}}
+// example: only react to Claude Code running in this one directory, with a custom message
+{"claude": {"subscribe": true, "dir": "/home/me/my-project", "message": "Claude's out, over to you"}}
 ```
 
 Event watched: a new assistant message with a terminal `stop_reason` (e.g.
@@ -216,10 +252,10 @@ Event watched: a new assistant message with a terminal `stop_reason` (e.g.
 starts count; existing history is skipped.
 
 The pause command is sent with a `reason` payload, so the game's pause overlay
-reads `Paused by Claude`:
+reads `Paused: Claude's done, you're up.` (or your custom `message`):
 
 ```json
-{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused by Claude"}}
+{"kind":"command", "type":"snake.pause", "payload":{"reason":"Paused: Claude's done, you're up."}}
 ```
 
 Both subscriptions can be enabled at the same time (`-pi -claude`); either

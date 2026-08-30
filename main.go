@@ -1,9 +1,14 @@
+// Command terminalika is an event-driven focus hub for people who work with
+// CLI AI agents: it listens to the agents you pick, tells you the moment one
+// finishes or needs your input, and keeps a library of retro games on hand
+// for the wait - pausing whatever you're playing when an agent calls.
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -16,16 +21,20 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 
-	"github.com/terminalika/terminalika/internal/claudesession"
+	"github.com/terminalika/terminalika/internal/agents"
 	"github.com/terminalika/terminalika/internal/config"
 	"github.com/terminalika/terminalika/internal/confirm"
 	"github.com/terminalika/terminalika/internal/engine"
+	"github.com/terminalika/terminalika/internal/home"
+	"github.com/terminalika/terminalika/internal/hub"
 	"github.com/terminalika/terminalika/internal/keystate"
 	"github.com/terminalika/terminalika/internal/listener"
-	"github.com/terminalika/terminalika/internal/menu"
 	"github.com/terminalika/terminalika/internal/notice"
-	"github.com/terminalika/terminalika/internal/pisession"
+	"github.com/terminalika/terminalika/internal/notify"
 	"github.com/terminalika/terminalika/internal/sidecar"
+	"github.com/terminalika/terminalika/internal/sources"
+	"github.com/terminalika/terminalika/internal/webhook"
+	"github.com/terminalika/terminalika/internal/wizard"
 	"github.com/terminalika/terminalika/internal/wsserver"
 )
 
@@ -36,31 +45,33 @@ const wsPortTries = 100
 var version = "dev"
 
 func main() {
-	gameFlag := flag.String("game", "", "skip the menu and launch a game directly ("+strings.Join(games.Default().Names(), ", ")+")")
-	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for events/commands (empty disables)")
-	piFlag := flag.Bool("pi", false, "subscribe to the latest pi session and pause the game when the agent settles")
-	claudeFlag := flag.Bool("claude", false, "subscribe to the latest Claude Code session and pause the game when the agent settles")
+	// Subcommands come before flag parsing: `terminalika notify ...` is run
+	// by agents' hooks and must never touch the terminal.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "notify":
+			os.Exit(runNotify(os.Args[2:]))
+		case "setup":
+			os.Args = append([]string{os.Args[0], "--setup"}, os.Args[2:]...)
+		case "reset":
+			os.Args = append([]string{os.Args[0], "--reset"}, os.Args[2:]...)
+		}
+	}
+
+	gameFlag := flag.String("game", "", "skip the home screen and launch a game directly ("+strings.Join(games.Default().Names(), ", ")+")")
+	wsFlag := flag.String("ws", "127.0.0.1:8080", "WebSocket base address for game events/commands (empty disables)")
+	agentsFlag := flag.String("agents", "", "comma-separated agents to listen to for this run, overriding the config ("+agentIDList()+")")
+	piFlag := flag.Bool("pi", false, "also listen to pi (shorthand for adding it to --agents)")
+	claudeFlag := flag.Bool("claude", false, "also listen to Claude Code (shorthand for adding it to --agents)")
+	setupFlag := flag.Bool("setup", false, "run the setup wizard again")
+	resetFlag := flag.Bool("reset", false, "delete config.json and start over with the setup wizard")
+	flag.BoolVar(resetFlag, "r", false, "shorthand for --reset")
 	versionFlag := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Println(version)
 		return
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
-	}
-	pi := piWatch{
-		enabled: *piFlag || cfg.PI.Subscribe,
-		dir:     cfg.PI.Dir,
-		session: cfg.PI.Session,
-	}
-	claude := claudeWatch{
-		enabled: *claudeFlag || cfg.Claude.Subscribe,
-		dir:     cfg.Claude.Dir,
-		session: cfg.Claude.Session,
 	}
 
 	registry := games.Default()
@@ -70,6 +81,23 @@ func main() {
 	if *gameFlag != "" && !registry.Has(*gameFlag) {
 		fmt.Fprintf(os.Stderr, "unknown game %q; available games: %v\n", *gameFlag, registry.Names())
 		os.Exit(1)
+	}
+
+	if *resetFlag {
+		if err := config.Remove(); err != nil {
+			fmt.Fprintf(os.Stderr, "terminalika: could not reset config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "terminalika: config reset (%s); running setup\n", config.Path())
+	}
+
+	firstRun := !config.Exists()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
 	}
 
 	// Ask the terminal about key releases before tcell takes it over.
@@ -86,30 +114,185 @@ func main() {
 	}
 	defer screen.Fini()
 
-	if !releases {
-		notice.Show(screen, keyReleaseWarning(support))
+	if firstRun || *setupFlag {
+		base := cfg
+		if firstRun {
+			base = config.Default()
+		}
+		saved, ok := wizard.New(screen, base).Run()
+		if ok {
+			cfg = saved
+		} else if firstRun {
+			// Cancelled on the very first run: play with nothing enabled,
+			// and offer setup again next time.
+			cfg = config.Config{}
+		}
 	}
 
-	seat, err := resolveListenerSeat(screen, &pi, &claude)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
-	}
-	if seat != nil {
-		defer seat.Release()
-	}
+	ids := resolveAgents(cfg, *agentsFlag, *piFlag, *claudeFlag)
+
+	app := newApp(screen, cfg, ids)
+	defer app.close()
 
 	if *gameFlag != "" {
-		runGame(screen, releases, registry, *gameFlag, *wsFlag, pi, claude, seat)
+		app.runGame(releases, support, registry, *gameFlag, *wsFlag)
 		return
 	}
 
+	h := home.New(screen, registry.Names(), app.homeEvents, app.status)
 	for {
-		m := menu.New(screen, registry.Names())
-		name, ok := m.Run()
+		name, ok := h.Run()
 		if !ok {
 			return
 		}
-		runGame(screen, releases, registry, name, *wsFlag, pi, claude, seat)
+		app.runGame(releases, support, registry, name, *wsFlag)
+	}
+}
+
+// agentIDList lists the catalogue ids for flag help.
+func agentIDList() string {
+	ids := make([]string, 0, len(agents.Catalog))
+	for _, a := range agents.Catalog {
+		ids = append(ids, string(a.ID))
+	}
+	return strings.Join(ids, ", ")
+}
+
+// resolveAgents decides which agents this run listens to: --agents replaces
+// the config's list when given; --pi/--claude always add theirs.
+func resolveAgents(cfg config.Config, agentsFlag string, pi, claude bool) []agents.ID {
+	c := cfg
+	if agentsFlag != "" {
+		var ids []agents.ID
+		for _, part := range strings.Split(agentsFlag, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			a, ok := agents.Lookup(part)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "terminalika: unknown agent %q in --agents (known: %s)\n", part, agentIDList())
+				continue
+			}
+			ids = append(ids, a.ID)
+		}
+		c.SetAgents(ids)
+	}
+	if pi {
+		c.PI.Subscribe = true
+	}
+	if claude {
+		c.Claude.Subscribe = true
+	}
+	return c.AgentIDs()
+}
+
+// app is the running launcher: the hub and everything subscribed to it.
+// The hub runs for the whole session - on the home screen, inside a game,
+// and in between - so no agent event is ever missed.
+type app struct {
+	screen   tcell.Screen
+	cfg      config.Config
+	hub      *hub.Hub
+	notifier *notify.Notifier
+	seat     *listener.Seat
+	set      sources.Set
+
+	homeEvents chan agents.Event
+	notifyDone chan struct{}
+	notifyCh   chan agents.Event
+}
+
+func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID) *app {
+	a := &app{
+		screen:   screen,
+		cfg:      cfg,
+		hub:      hub.New(),
+		notifier: notify.New(notify.Options{Bell: cfg.Notify.Bell, Desktop: cfg.Notify.Desktop}, screen.Beep),
+	}
+
+	if len(ids) == 0 {
+		return a
+	}
+
+	// Only one terminalika process may react to agent events at a time.
+	seat, ok := a.resolveListenerSeat()
+	if !ok {
+		return a
+	}
+	a.seat = seat
+
+	a.set = sources.Build(cfg, ids)
+	for _, src := range a.set.Sources {
+		a.hub.Add(src)
+	}
+	for _, ag := range a.set.Agents {
+		a.hub.Watch(ag)
+	}
+
+	// The notifier is the one subscriber that's always on, whatever screen
+	// is showing.
+	a.notifyCh = a.hub.Subscribe()
+	a.notifyDone = make(chan struct{})
+	go func() {
+		defer close(a.notifyDone)
+		for ev := range a.notifyCh {
+			a.notifier.Notify(ev)
+		}
+	}()
+
+	a.homeEvents = a.hub.Subscribe()
+	a.hub.Start()
+	return a
+}
+
+// resolveListenerSeat claims the global listener seat: silently when free
+// or stale, after asking when a live process holds it. Declining means this
+// process runs without agent listening. If another process later takes the
+// seat over, the hub is muted so a single agent event only ever pauses one
+// screen.
+func (a *app) resolveListenerSeat() (*listener.Seat, bool) {
+	if status := listener.Check(); status.Held {
+		if !confirm.Ask(a.screen, []string{
+			"Another terminalika window is currently listening",
+			"for agent events.",
+			"",
+			"Move event listening to this window instead?",
+		}) {
+			return nil, false
+		}
+	}
+	seat, err := listener.Claim(func() { a.hub.Mute(true) })
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "terminalika: %v\n", err)
+		return nil, false
+	}
+	return seat, true
+}
+
+// status is what the home screen shows about the hub.
+func (a *app) status() home.Status {
+	st := home.Status{
+		Agents:    a.hub.Agents(),
+		Notify:    a.notifier.Describe(),
+		AutoPause: a.cfg.PauseOnEvent(),
+		Listening: a.hub.Running() && (a.seat == nil || a.seat.Held()),
+	}
+	if a.set.Webhook != nil {
+		st.Webhook = a.set.Webhook.URL()
+	}
+	return st
+}
+
+func (a *app) close() {
+	a.hub.Stop()
+	if a.notifyCh != nil {
+		a.hub.Unsubscribe(a.notifyCh)
+		close(a.notifyCh)
+		<-a.notifyDone
+	}
+	if a.seat != nil {
+		a.seat.Release()
 	}
 }
 
@@ -134,16 +317,27 @@ func newScreen(support keystate.Support) (tcell.Screen, bool, error) {
 // page explaining the player's particular situation.
 const docsURL = "terminalika.dev"
 
+// heldControlLabel names what a game's continuously-held key drives, for the
+// key-release warning below. Only games that implement
+// core.KeyStateHandler are affected by a terminal's inability to report key
+// releases - everything else moves one step per keypress and never reads
+// held state, so it's unaffected regardless of the terminal. Keep this in
+// sync with which games implement that interface.
+var heldControlLabel = map[string]string{
+	"pong": "paddles",
+}
+
 // keyReleaseWarning is shown when the terminal cannot report key releases:
 // holding a key then only produces the terminal's auto-repeat, which makes
-// continuous movement (paddles, the cannon) feel sticky. The notice stays
-// short and defers the full explanation to the website.
-func keyReleaseWarning(support keystate.Support) []string {
+// this game's continuous movement (named by control) feel sticky. The
+// notice stays short and defers the full explanation to the website.
+func keyReleaseWarning(support keystate.Support, control string) []string {
+	held := fmt.Sprintf("Held keys (%s) will feel sticky.", control)
 	if support.Zellij {
 		return []string{
 			"Zellij does not relay key releases",
 			"",
-			"Held keys (paddles, cannon) will feel sticky.",
+			held,
 			"Your terminal is fine; run outside zellij for smooth movement.",
 			"",
 			docsURL + "/terminals/zellij",
@@ -153,7 +347,7 @@ func keyReleaseWarning(support keystate.Support) []string {
 		return []string{
 			"tmux does not support the kitty keyboard protocol",
 			"",
-			"Held keys (paddles, cannon) will feel sticky.",
+			held,
 			"Your terminal is fine; run outside tmux for smooth movement.",
 			"",
 			docsURL + "/terminals/tmux",
@@ -162,7 +356,7 @@ func keyReleaseWarning(support keystate.Support) []string {
 	return []string{
 		"Your terminal does not report key releases",
 		"",
-		"Held keys (paddles, cannon) will feel sticky.",
+		held,
 		"Use a terminal that speaks the kitty keyboard protocol",
 		"(kitty, foot, Ghostty, Alacritty, WezTerm, iTerm2, Konsole, Rio;",
 		"Windows Terminal on Windows).",
@@ -171,53 +365,6 @@ func keyReleaseWarning(support keystate.Support) []string {
 		"",
 		"Detected: " + support.Detail,
 	}
-}
-
-// resolveListenerSeat decides whether this process may run the pi/Claude
-// Code watchers: only one terminalika process may hold the listener seat at
-// a time, since a single agent's events should only ever pause one screen.
-//
-// A process that doesn't want to listen at all (neither -pi nor -claude, nor
-// their config equivalents) never touches the seat. When the seat is free -
-// or its holder is gone without releasing it - it's claimed silently. When a
-// live process already holds it, the player is asked whether to move
-// listening here; declining disables both watches for this process without
-// asking again.
-func resolveListenerSeat(screen tcell.Screen, pi *piWatch, claude *claudeWatch) (*listener.Seat, error) {
-	if !pi.enabled && !claude.enabled {
-		return nil, nil
-	}
-
-	if status := listener.Check(); status.Held {
-		if !confirm.Ask(screen, []string{
-			"Another terminalika window is currently listening",
-			"for agent events (pi / Claude Code).",
-			"",
-			"Move event listening to this window instead?",
-		}) {
-			pi.enabled = false
-			claude.enabled = false
-			return nil, nil
-		}
-	}
-
-	return listener.Claim(nil)
-}
-
-// piWatch is the resolved pi subscription configuration: the -pi flag and the
-// config file are OR-ed together.
-type piWatch struct {
-	enabled bool
-	dir     string
-	session string
-}
-
-// claudeWatch is the resolved Claude Code subscription configuration: the
-// -claude flag and the config file are OR-ed together.
-type claudeWatch struct {
-	enabled bool
-	dir     string
-	session string
 }
 
 // resolveWSAddr binds a TCP listener for the sidecar. It starts at the base
@@ -246,54 +393,29 @@ func resolveWSAddr(base string, tries int) (net.Listener, string, error) {
 	return nil, "", fmt.Errorf("no free port starting at %s after %d tries: %w", base, tries, lastErr)
 }
 
-func runGame(screen tcell.Screen, releases bool, registry *core.Registry, name, wsAddr string, pi piWatch, claude claudeWatch, seat *listener.Seat) {
+// runGame plays one game to completion (ESC), with the hub bridged into
+// the engine for the duration.
+func (a *app) runGame(releases bool, support keystate.Support, registry *core.Registry, name, wsAddr string) {
 	game, ok := registry.Get(name)
 	if !ok {
 		return
 	}
 
-	eng := engine.New(screen, game)
+	if !releases {
+		if _, ok := game.(core.KeyStateHandler); ok {
+			control := heldControlLabel[name]
+			if control == "" {
+				control = "keys"
+			}
+			notice.Show(a.screen, keyReleaseWarning(support, control))
+		}
+	}
+
+	eng := engine.New(a.screen, game)
 	eng.SetTerminalReleases(releases)
 
-	// The listener seat may have been taken over by another process since it
-	// was claimed (or since the last game was played from this menu loop);
-	// don't start watchers this process no longer has the right to run.
-	if seat != nil && !seat.Held() {
-		pi.enabled = false
-		claude.enabled = false
-	}
-
-	stopPi := startPiWatch(name, eng, pi)
-	defer stopPi()
-
-	stopClaude := startClaudeWatch(name, eng, claude)
-	defer stopClaude()
-
-	// While this session's watchers are active, keep confirming the seat is
-	// still ours; if another process takes over mid-session, stop reacting
-	// to agent events immediately instead of waiting for the next game.
-	stopSeatWatch := func() {}
-	if seat != nil && (pi.enabled || claude.enabled) {
-		ctx, cancel := context.WithCancel(context.Background())
-		go func() {
-			ticker := time.NewTicker(time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					if !seat.Held() {
-						stopPi()
-						stopClaude()
-						return
-					}
-				}
-			}
-		}()
-		stopSeatWatch = cancel
-	}
-	defer stopSeatWatch()
+	stopBridge := a.bridge(name, eng)
+	defer stopBridge()
 
 	// Optional WebSocket sidecar: terminal stays in charge, remote clients can
 	// observe events and send commands.
@@ -330,42 +452,135 @@ func runGame(screen tcell.Screen, releases bool, registry *core.Registry, name, 
 	sidecar.RemoveInfo()
 }
 
-// startPiWatch subscribes the game to the latest pi session: when the agent
-// settles, the game is paused. It returns a stop function that cancels the
-// watcher. When the subscription is disabled or no session can be found it
-// returns a no-op stop.
-func startPiWatch(game string, eng *engine.Engine, pi piWatch) func() {
-	if !pi.enabled {
+// bridge subscribes the running game to the hub: every agent event pauses
+// the game with an attributed overlay (auto-pause on) or flashes a banner
+// over it (auto-pause off). It returns a stop function.
+func (a *app) bridge(game string, eng *engine.Engine) func() {
+	if !a.hub.Running() {
 		return func() {}
 	}
-	scope := pisession.ResolveScope(pisession.Options{Dir: pi.dir, Session: pi.session})
-	ctx, cancel := context.WithCancel(context.Background())
-	w := pisession.NewWatcher(scope, func() {
-		eng.SendCommand(core.Command{
-			Type:    game + ".pause",
-			Payload: core.MustJSON(map[string]string{"reason": "Paused by PI"}),
-		})
-	})
-	go w.Run(ctx)
-	return cancel
+	ch := a.hub.Subscribe()
+	autoPause := a.cfg.PauseOnEvent()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range ch {
+			if autoPause {
+				eng.SendCommand(pauseCommand(game, ev))
+			} else {
+				eng.Flash([]string{ev.Tag(), ev.Title()}, string(ev.Agent.ID))
+			}
+		}
+	}()
+	return func() {
+		a.hub.Unsubscribe(ch)
+		close(ch)
+		<-done
+	}
 }
 
-// startClaudeWatch subscribes the game to the latest Claude Code session:
-// when the agent settles, the game is paused. It returns a stop function that
-// cancels the watcher. When the subscription is disabled or no session can be
-// found it returns a no-op stop.
-func startClaudeWatch(game string, eng *engine.Engine, claude claudeWatch) func() {
-	if !claude.enabled {
-		return func() {}
+// pauseCommand is the "<game>.pause" command an agent event turns into:
+// the overlay lines the engine shows, the agent (for its color), and a
+// one-line reason for observers.
+func pauseCommand(game string, ev agents.Event) core.Command {
+	lines := ev.OverlayLines()
+	if ev.Kind == agents.Finished && ev.Detail != "" {
+		// A custom per-agent message from config.json replaces the middle
+		// line ("Your AI Agent has finished.").
+		lines[1] = ev.Detail
 	}
-	scope := claudesession.ResolveScope(claudesession.Options{Dir: claude.dir, Session: claude.session})
-	ctx, cancel := context.WithCancel(context.Background())
-	w := claudesession.NewWatcher(scope, func() {
-		eng.SendCommand(core.Command{
-			Type:    game + ".pause",
-			Payload: core.MustJSON(map[string]string{"reason": "Paused by Claude"}),
-		})
-	})
-	go w.Run(ctx)
-	return cancel
+	return core.Command{
+		Type: game + ".pause",
+		Payload: core.MustJSON(map[string]any{
+			"reason": ev.Title(),
+			"agent":  string(ev.Agent.ID),
+			"kind":   ev.Kind.String(),
+			"lines":  lines,
+		}),
+	}
+}
+
+// hookInputTimeout bounds how long `terminalika notify` waits for hook JSON
+// on stdin. A hook pipes its payload and closes the pipe immediately, so
+// this only matters when stdin is some pipe that never closes (a
+// notifications-command run with an inherited pipe, say) - the notification
+// must go out anyway rather than hang forever.
+const hookInputTimeout = 500 * time.Millisecond
+
+// readHookInput returns stdin's contents when stdin is a pipe or file (a
+// hook's JSON payload), nil when it's a terminal or nothing arrives within
+// timeout.
+func readHookInput(f *os.File, timeout time.Duration) []byte {
+	stat, err := f.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice != 0 {
+		return nil
+	}
+	type result struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(io.LimitReader(f, 1<<20))
+		ch <- result{data, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil
+		}
+		return r.data
+	case <-time.After(timeout):
+		return nil
+	}
+}
+
+// runNotify implements `terminalika notify`: deliver one agent event to the
+// running terminalika through its webhook ingest. It's meant to be wired
+// into agents' own hooks; when a hook pipes its JSON on stdin (Claude
+// Code, Cursor) the kind is inferred from it unless --kind says otherwise.
+func runNotify(args []string) int {
+	fs := flag.NewFlagSet("terminalika notify", flag.ContinueOnError)
+	agent := fs.String("agent", "", "agent id ("+agentIDList()+"), or any name")
+	kind := fs.String("kind", "", "finished or input_required (inferred from hook JSON on stdin when empty; defaults to finished)")
+	detail := fs.String("detail", "", "optional free text shown in the notification")
+	quiet := fs.Bool("quiet", true, "exit 0 even when no terminalika is running (hooks must never fail the agent)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: terminalika notify --agent <id> [--kind finished|input_required] [--detail text]")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Delivers an agent event to the running terminalika (see terminalika.dev/docs/events).")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *agent == "" {
+		fs.Usage()
+		return 2
+	}
+
+	req := webhook.Request{Agent: *agent, Kind: *kind, Detail: *detail}
+	if data := readHookInput(os.Stdin, hookInputTimeout); data != nil {
+		if k, d, ok := webhook.InferKind(data); ok {
+			if req.Kind == "" {
+				req.Kind = k.String()
+			}
+			if req.Detail == "" {
+				req.Detail = d
+			}
+		} else if len(strings.TrimSpace(string(data))) > 0 && req.Kind == "" {
+			// A hook we don't map to either kind (a subagent stop, a tool
+			// hook): nothing to notify about.
+			return 0
+		}
+	}
+
+	if err := webhook.Post(req); err != nil {
+		if *quiet {
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "terminalika notify: %v\n", err)
+		return 1
+	}
+	return 0
 }
