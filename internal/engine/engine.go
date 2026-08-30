@@ -247,6 +247,8 @@ type heldKey struct {
 
 // New creates an engine for the given game.
 func New(screen tcell.Screen, game core.Game) *Engine {
+	// The engine owns these keys (handleKey); the game only names them.
+	core.SetGlobalKeys(game, core.GlobalKeys{Pause: "Space", Reset: "R", Leave: "Esc", LeaveAction: "menu"})
 	return &Engine{
 		screen:   screen,
 		game:     game,
