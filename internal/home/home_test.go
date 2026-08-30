@@ -90,8 +90,11 @@ func TestHeroModeHidesLibraryAndShowsPrompt(t *testing.T) {
 	if !contains(text, "Press [↓] Down Arrow") {
 		t.Error("hero prompt missing from bottom bar")
 	}
-	if !contains(text, "TERMINALIKA") && !contains(text, "█") {
+	if !contains(text, "terminalika") && !contains(text, "█") && !contains(text, "▀") {
 		t.Error("title not drawn")
+	}
+	if contains(text, "TERMINALIKA") {
+		t.Error("title must be lowercase")
 	}
 
 	// Slide down: after enough frames the library is fully revealed.
@@ -201,7 +204,7 @@ func TestSmallTerminalStillRenders(t *testing.T) {
 	}
 	h.draw() // must not panic
 	text := screenText(s)
-	if !contains(text, "TERMINALIKA") {
+	if !contains(text, "terminalika") {
 		t.Error("plain title fallback missing on a narrow terminal")
 	}
 	for _, g := range games {

@@ -43,7 +43,7 @@ const (
 	toastFor    = 8 * time.Second
 	cardW       = previewCols + 4
 	cardH       = previewRows + 4
-	titleWord   = "TERMINALIKA"
+	titleWord   = "terminalika"
 	tagline     = "AI focus hub · notification listener · retro game library"
 )
 
@@ -448,7 +448,7 @@ type layout struct {
 func heroRows(big, tagline bool) int {
 	n := 3 // title, underline, status
 	if big {
-		n = glyphRows + 3 // title block, underline, blank, status
+		n = titleRows + 3 // title block, underline, blank, status
 	}
 	if tagline {
 		n++
@@ -616,17 +616,17 @@ func (h *Home) drawHero(w, y int) {
 	ui.Fill(s, cx-heroW/2, y, heroW, h.lay.heroH, tcell.StyleDefault)
 
 	if h.lay.big {
-		rows := renderBig(titleWord)
+		rows := titleCells(titleWord)
 		width := bigWidth(titleWord)
 		x0 := cx - width/2
 		for r, row := range rows {
 			for c, ch := range row {
-				if ch == '#' {
-					s.SetContent(x0+c, y+r, '█', nil, tcell.StyleDefault.Foreground(h.waveColor(c, width)))
+				if ch != ' ' {
+					s.SetContent(x0+c, y+r, ch, nil, tcell.StyleDefault.Foreground(h.waveColor(c, width)))
 				}
 			}
 		}
-		y += glyphRows
+		y += titleRows
 		h.drawUnderline(x0, y, width)
 		y += 2
 	} else {
