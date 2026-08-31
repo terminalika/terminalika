@@ -2,16 +2,23 @@
 
 ![terminalika next to Claude Code: the game pauses when the agent needs you](.github/demo.gif)
 
-Terminalika is an event-driven focus hub for people who work with CLI AI
-agents. It listens to the agents you pick (Claude Code, Pi Agent, Aider,
-Cursor CLI), tells you the moment one finishes or needs your input, and
-keeps a library of retro games on hand for the wait - pausing whatever
-you're playing with a one-line notice that says exactly who wants what.
-The games are deliberately easy to drop: the point is to stay in the
-terminal for a few-minute wait instead of losing 20 minutes to a browser
-tab.
+Terminalika is a retro game launcher for the wait while a CLI AI agent
+works. It watches the agents you pick (Claude Code, Pi Agent, Aider, Cursor
+CLI) and pauses whatever you're playing the moment one finishes or needs
+your input, with a one-line notice that says exactly who wants what. The
+games are deliberately easy to drop: the point is to stay in the terminal
+for a few-minute wait instead of losing 20 minutes to a browser tab. It is
+not a notification service: no desktop popups, nothing running in the
+background.
 
-Marketing pitch, install matrix and docs: **[terminalika.dev](https://terminalika.dev)**.
+It comes in two forms:
+
+- the **CLI** - this repo: a standalone launcher that runs in the pane next
+  to any agent and tails the agent's own transcript (or takes a hook);
+- the **extension** - [pi-terminalika](https://github.com/terminalika/pi-terminalika):
+  the same games as an overlay *inside* [pi](https://pi.dev), no second pane.
+
+Marketing pitch and docs: **[terminalika.dev](https://terminalika.dev)**.
 This file is the technical reference for the CLI.
 
 ## What's in this repo
@@ -39,10 +46,20 @@ imported as a normal Go dependency.
 
 ## Install
 
-Prebuilt packages and binaries (Homebrew, Scoop, `.deb`/`.rpm`/`.pkg.tar.zst`/
-`.apk`, raw `tar.gz`/`zip`): **[terminalika.dev/install](https://terminalika.dev/install/)**.
+| Method                                   | CLI | Extension (pi) |
+| ---------------------------------------- | :-: | :------------: |
+| Homebrew (`brew install --cask terminalika`, tap `terminalika/tap`) | ✓ | - |
+| Scoop (bucket `terminalika/scoop-bucket`) | ✓ | - |
+| `.deb` / `.rpm` / `.pkg.tar.zst` / `.apk` from the releases page | ✓ | - |
+| Raw binary (`tar.gz` / `zip`)            | ✓ | - |
+| `go install github.com/terminalika/terminalika@latest` (Go 1.24+) | ✓ | - |
+| `pi install git:github.com/terminalika/pi-terminalika` | - | ✓ |
 
-From source (Go 1.24+):
+### CLI
+
+Every release ships prebuilt packages and binaries for Linux, macOS and
+Windows (`amd64` and `arm64`): **[terminalika.dev/install](https://terminalika.dev/install/)**
+has the copy-paste lines per package manager. From source:
 
 ```sh
 go install github.com/terminalika/terminalika@latest
@@ -50,6 +67,31 @@ go install github.com/terminalika/terminalika@latest
 
 Windows needs Windows 10+ and a VT-capable terminal (Windows Terminal). See
 [RELEASING.md](RELEASING.md) for the release pipeline.
+
+### Extension (pi)
+
+```sh
+pi install git:github.com/terminalika/pi-terminalika
+```
+
+Then `/play` inside pi. It needs no CLI: the games ship as wasm inside the
+package, pause on pi's own `agent_settled` event, and `/play stop` is the
+only way out. See its [README](https://github.com/terminalika/pi-terminalika).
+
+## Agents
+
+What each agent gets, in three stages: whether the CLI detects it with
+nothing installed on the agent side, what the agent itself has to be told
+for the CLI, and whether the games can run inside the agent.
+
+| Agent       | 1 · CLI, out of the box                                   | 2 · CLI, agent-side config                                              | 3 · Extension inside the agent |
+| ----------- | --------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------ |
+| Claude Code | ✓ tails `~/.claude/projects`: end of turn, `AskUserQuestion` | optional: `Notification`/`Stop` hooks add permission prompts             | - (Claude Code has no UI API)  |
+| Pi Agent    | ✓ tails `~/.pi/agent/sessions`                            | none                                                                    | ✓ pi-terminalika (`/play`)     |
+| Aider       | ✓ tails `.aider.chat.history.md` (best effort)             | recommended: `--notifications-command "terminalika notify --agent aider"` | -                              |
+| Cursor CLI  | - (no session files)                                       | required: `stop` hook in `~/.cursor/hooks.json` → `terminalika notify`    | -                              |
+
+Hook and command snippets: [terminalika.dev/events](https://terminalika.dev/events/).
 
 ## Run
 
