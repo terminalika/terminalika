@@ -18,18 +18,16 @@ This file is the technical reference for the CLI.
 
 | Package                 | Role                                                                                      |
 | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `main.go`               | Flags, subcommands (`daemon`, `notify`, `setup`, `reset`), the app loop, screen wrapper.  |
-| `internal/wizard`       | First-run setup (agents, desktop-notification mode, auto-pause, background process).     |
-| `internal/config`       | `config.json` schema v3, load/save, v2 migration.                                        |
+| `main.go`               | Flags, subcommands (`notify`, `setup`, `reset`), the app loop.                            |
+| `internal/wizard`       | First-run setup (agents, auto-pause).                                                    |
+| `internal/config`       | `config.json` schema v3, load/save; older files' notification/daemon fields are ignored.  |
 | `internal/agents`       | Agent catalogue and the normalised `Event` (`finished` / `input_required`).              |
 | `internal/hub`          | Runs every source concurrently, fans events out, dedupes, tracks the one current notice. |
 | `internal/sources`      | Builds sources: Claude Code / pi transcript tails, Aider history tail, webhook ingest.    |
 | `internal/claudesession`, `internal/pisession`, `internal/aiderhistory` | The native watchers.                                    |
 | `internal/webhook`      | Local HTTP ingest (`hub.json`) and the `terminalika notify` client.                       |
-| `internal/notify`       | Desktop notifications (`notify-send` / `osascript` / PowerShell) gated by a mode.         |
-| `internal/listener`     | Heartbeat seat files: the listener seat (one reacting process) and the daemon seat.       |
-| `internal/daemon`       | The headless background process and how a window spawns/stops it.                        |
-| `internal/autostart`    | Login registration: XDG autostart, launchd agent, HKCU `Run` key.                        |
+| `internal/listener`     | Heartbeat seat file: the listener seat (the one window reacting to events).              |
+| `internal/autostart`    | Removes the login entry earlier versions registered for their background process.        |
 | `internal/home`         | Home screen: Pixelify-Sans pixel title, library, fuzzy launch, event toast.                |
 | `internal/engine`       | Game loop, global keys, pause/game-over notices, banners, key-release synthesis.          |
 | `internal/keystate`     | Kitty keyboard protocol / win32-input-mode key releases.                                 |
@@ -63,25 +61,22 @@ terminalika --game=tetris        # skip the home screen (snake, tetris, invaders
 terminalika --agents=claude,aider   # listen to these agents for this run only
 terminalika --ws=""              # disable the WebSocket sidecar (default 127.0.0.1:8080)
 
-terminalika daemon               # headless background listener (see "Processes")
 terminalika notify --agent cursor --kind input_required   # deliver an event from a hook
 ```
 
 ## Setup wizard
 
-Five steps, all answerable with Enter for the recommended defaults:
+Three steps, all answerable with Enter for the recommended defaults:
 
 1. **Agents** - any of Claude Code, Pi Agent, Aider, Cursor CLI.
-2. **Desktop notifications, when?** - `unfocused` (recommended: only while the
-   terminalika window doesn't have focus), `always`, `no_window` (only from
-   the background process), `never`.
-3. **Auto-pause** - freeze the game with a centred notice (recommended), or
+2. **Auto-pause** - freeze the game with a centred notice (recommended), or
    keep playing and show a corner banner.
-4. **Background** - keep `terminalika daemon` running from login (recommended).
-5. Summary, then save.
+3. Summary, then save.
 
-There is no in-game "notify or not" switch and no bell: the in-game notice
-is always on, and listening to no agents is the way to get silence.
+There is no "notify or not" switch, no bell, no desktop notification and no
+background process: terminalika is a game launcher, not a notification
+service. The in-game notice is always on, and listening to no agents is the
+way to get silence.
 
 ## config.json
 
@@ -93,11 +88,7 @@ overrides. Schema version 3:
 {
   "version": 3,
   "agents": ["claude", "pi"],          // claude, pi, aider, cursor
-  "notify": {
-    "desktop": "unfocused"             // never | no_window | unfocused | always
-  },
   "auto_pause": true,                  // omit = true
-  "background": true,                  // run `terminalika daemon` from login
   "webhook": { "disabled": false, "addr": "" },   // ingest; empty addr = 127.0.0.1:7788
   "claude": { "dir": "", "session": "", "message": "" },
   "pi":     { "dir": "", "session": "", "message": "" },
@@ -105,15 +96,14 @@ overrides. Schema version 3:
 }
 ```
 
-- `notify.desktop` accepts the v2 booleans too: `true` → `always`, `false` →
-  `never`. A v2 `notify.bell` is ignored.
+- `notify` and `background`, written by earlier versions, are ignored.
 - `<agent>.message` replaces the one-line in-game notice for that agent's
   `finished` events (default: *Claude Code's done - you're up.*).
 - `<agent>.dir` scopes the watcher to the agent running in that project;
   `session` / `history` pin one file. Legacy `"claude": {"subscribe": true}`
   still enables an agent.
 - Runtime files next to it: `scores.json`, `hub.json` (ingest address),
-  `ws.json` (sidecar address), `listener.json`, `daemon.json`, `daemon.log`.
+  `ws.json` (sidecar address), `listener.json`.
 
 ## Events
 
@@ -137,8 +127,7 @@ SPACE resumes. With auto-pause off, a 6-second banner in the top-right
 corner. On the home screen, a toast. Whichever screen shows an event marks
 it *seen* on the hub (`hub.Current` / `MarkSeen`): one event is shown once,
 and never again anywhere - leaving a game after dismissing the notice does
-not bring it back as a toast. Desktop notifications go out in parallel
-according to `notify.desktop`.
+not bring it back as a toast.
 
 ## Processes
 
@@ -149,20 +138,11 @@ new window shows a notice saying it did). The seat holder is the one process
 reacting to events; it also rewrites `hub.json` so `terminalika notify`
 reaches it.
 
-`terminalika daemon` is the headless twin: same hub, same notifier, no
-screen. It holds its own **daemon seat** (`daemon.json`; a second daemon
-exits at once; deleting the file asks it to stop) and takes the listener
-seat only while no window holds it - so it delivers desktop notifications
-between windows and from login, and goes quiet the moment a window opens.
-With `background: true` a window installs the login entry
-(`~/.config/autostart/terminalika.desktop`, `~/Library/LaunchAgents/dev.terminalika.daemon.plist`,
-or `HKCU\...\Run\terminalika`), (re)starts the daemon when the wizard saves,
-and spawns a missing one on start. `background: false` removes the entry and
-stops the daemon.
-
-The `unfocused` notification mode uses terminal focus events (tcell
-`EnableFocus`), tracked by a screen wrapper in `main.go`; the daemon counts
-as never focused.
+Nothing runs when no window is open: terminalika is a game launcher, not a
+notification service. Earlier versions had a `terminalika daemon` login
+entry; a window removes it (and the daemon's `daemon.json` / `daemon.log`)
+on start, and `terminalika daemon` itself now just removes the entry and
+exits.
 
 ## Home screen
 

@@ -4,50 +4,28 @@ package autostart
 
 import (
 	"os"
-	"strings"
+	"path/filepath"
 	"testing"
 )
 
-func TestXDGInstallRemove(t *testing.T) {
+// An entry left by an earlier version is removed; removing again is fine.
+func TestXDGRemoveClearsLeftoverEntry(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	if Installed() {
-		t.Fatal("Installed() = true before Install")
-	}
-	if err := Install(); err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if !Installed() {
-		t.Fatal("Installed() = false after Install")
-	}
-	data, err := os.ReadFile(Path())
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	exe, _ := executable()
-	for _, want := range []string{"[Desktop Entry]", "Exec=" + desktopQuote(exe) + " daemon", "Terminal=false"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("entry missing %q:\n%s", want, text)
-		}
+	if err := os.WriteFile(Path(), []byte("[Desktop Entry]\nExec=/usr/bin/terminalika daemon\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := Remove(); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
-	if Installed() {
-		t.Fatal("Installed() = true after Remove")
+	if _, err := os.Stat(Path()); err == nil {
+		t.Fatal("entry still present after Remove")
 	}
 	if err := Remove(); err != nil {
 		t.Fatalf("Remove when absent: %v", err)
-	}
-}
-
-func TestDesktopQuote(t *testing.T) {
-	if got := desktopQuote("/usr/bin/terminalika"); got != "/usr/bin/terminalika" {
-		t.Errorf("plain path quoted: %q", got)
-	}
-	if got := desktopQuote(`/home/me/my apps/terminalika`); got != `"/home/me/my apps/terminalika"` {
-		t.Errorf("path with space: %q", got)
 	}
 }

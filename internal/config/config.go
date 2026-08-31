@@ -16,9 +16,10 @@ import (
 
 // CurrentVersion is the schema version the setup wizard writes. Files
 // without a version are the pre-hub schema (only the "pi"/"claude" blocks)
-// and are still honoured through their "subscribe" fields; version 2 files
-// carry a boolean "desktop" (and a "bell" that is now ignored), mapped onto
-// DesktopMode on load.
+// and are still honoured through their "subscribe" fields. Earlier files
+// also carried "notify" (desktop notifications) and "background" (a login
+// daemon); both are gone - terminalika is a game launcher, not a
+// notification service - and are ignored on load.
 const CurrentVersion = 3
 
 // Config is the root configuration object.
@@ -29,17 +30,9 @@ type Config struct {
 	// Agents lists the ids of the agents to listen to (see agents.Catalog).
 	Agents []string `json:"agents"`
 
-	// Notify selects the notification channels.
-	Notify Notify `json:"notify"`
-
 	// AutoPause, when nil, defaults to true: a running game is paused the
 	// moment any watched agent needs the player.
 	AutoPause *bool `json:"auto_pause,omitempty"`
-
-	// Background keeps terminalika running as a background process
-	// (`terminalika daemon`), started at login, so agent events are
-	// delivered even when no terminalika window is open.
-	Background bool `json:"background"`
 
 	// Webhook configures the local event ingest.
 	Webhook Webhook `json:"webhook"`
@@ -49,82 +42,6 @@ type Config struct {
 	PI     PI     `json:"pi"`
 	Claude Claude `json:"claude"`
 	Aider  Aider  `json:"aider"`
-}
-
-// Notify selects how the player is told an agent needs them, beyond the
-// in-game overlay/banner (which is always on: the way to silence
-// terminalika entirely is to listen to no agents).
-type Notify struct {
-	// Desktop says when a native OS notification is shown.
-	Desktop DesktopMode `json:"desktop"`
-}
-
-// DesktopMode says when a desktop notification is sent for an agent event.
-type DesktopMode string
-
-const (
-	// DesktopNever sends none.
-	DesktopNever DesktopMode = "never"
-
-	// DesktopNoWindow sends one only when no terminalika window is open -
-	// i.e. only from the background process, which makes it pointless
-	// unless Background is on.
-	DesktopNoWindow DesktopMode = "no_window"
-
-	// DesktopUnfocused sends one unless a terminalika window has the
-	// terminal's focus (the overlay is already in front of the player).
-	DesktopUnfocused DesktopMode = "unfocused"
-
-	// DesktopAlways sends one for every event.
-	DesktopAlways DesktopMode = "always"
-)
-
-// DesktopModes lists the modes in the order the wizard offers them.
-var DesktopModes = []DesktopMode{DesktopUnfocused, DesktopAlways, DesktopNoWindow, DesktopNever}
-
-// Valid reports whether m is one of the known modes.
-func (m DesktopMode) Valid() bool {
-	for _, x := range DesktopModes {
-		if x == m {
-			return true
-		}
-	}
-	return false
-}
-
-// UnmarshalJSON accepts the mode's name, or the version-2 boolean: true
-// was "always notify" (the only behaviour there was), false is never.
-func (m *DesktopMode) UnmarshalJSON(data []byte) error {
-	var b bool
-	if err := json.Unmarshal(data, &b); err == nil {
-		if b {
-			*m = DesktopAlways
-		} else {
-			*m = DesktopNever
-		}
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	*m = DesktopMode(s)
-	return nil
-}
-
-// Label is the human-readable form used in the wizard and status lines.
-func (m DesktopMode) Label() string {
-	switch m {
-	case DesktopAlways:
-		return "always"
-	case DesktopNoWindow:
-		return "only when no window is open"
-	case DesktopUnfocused:
-		return "only when the window isn't focused"
-	case DesktopNever:
-		return "never"
-	}
-	return string(m)
 }
 
 // Webhook configures the local HTTP ingest that agents' hooks post to.
@@ -240,15 +157,12 @@ func Save(c Config) error {
 }
 
 // Default is the configuration the wizard starts from: Claude Code and pi
-// selected, desktop notifications when the window isn't focused, auto-pause
-// on, background process on.
+// selected, auto-pause on.
 func Default() Config {
 	on := true
 	return Config{
-		Agents:     []string{string(agents.Claude), string(agents.Pi)},
-		Notify:     Notify{Desktop: DesktopUnfocused},
-		AutoPause:  &on,
-		Background: true,
+		Agents:    []string{string(agents.Claude), string(agents.Pi)},
+		AutoPause: &on,
 	}
 }
 
@@ -256,15 +170,6 @@ func Default() Config {
 // (true unless explicitly disabled).
 func (c Config) PauseOnEvent() bool {
 	return c.AutoPause == nil || *c.AutoPause
-}
-
-// DesktopMode returns the desktop notification mode, DesktopNever when the
-// file doesn't say.
-func (c Config) DesktopMode() DesktopMode {
-	if c.Notify.Desktop == "" {
-		return DesktopNever
-	}
-	return c.Notify.Desktop
 }
 
 // AgentIDs returns the set of enabled agents: the Agents list merged with
@@ -320,9 +225,6 @@ func (c Config) Validate() error {
 		if _, ok := agents.Lookup(id); !ok {
 			return errors.New("unknown agent " + id + " in config.json")
 		}
-	}
-	if m := c.Notify.Desktop; m != "" && !m.Valid() {
-		return errors.New("unknown notify.desktop mode " + string(m) + " in config.json (never, no_window, unfocused, always)")
 	}
 	return nil
 }

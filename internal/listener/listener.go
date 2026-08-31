@@ -26,9 +26,6 @@ type Kind string
 const (
 	// Window is an interactive terminalika (home screen or a game).
 	Window Kind = "window"
-
-	// Daemon is the headless background process.
-	Daemon Kind = "daemon"
 )
 
 // staleAfter is how long a held seat is trusted without a heartbeat refresh
@@ -42,9 +39,6 @@ var heartbeatInterval = 2 * time.Second
 
 // Path returns the listener seat file's location.
 func Path() string { return filepath.Join(sidecar.Dir(), "listener.json") }
-
-// DaemonPath returns the daemon seat file's location.
-func DaemonPath() string { return filepath.Join(sidecar.Dir(), "daemon.json") }
 
 // record is the on-disk seat: who holds it and when they last proved they're
 // still alive.
@@ -65,9 +59,6 @@ type Status struct {
 // Check reports the listener seat's status without claiming or changing
 // anything.
 func Check() Status { return check(Path()) }
-
-// CheckDaemon reports the daemon seat's status.
-func CheckDaemon() Status { return check(DaemonPath()) }
 
 func check(path string) Status {
 	r, ok := read(path)
@@ -121,36 +112,19 @@ type Seat struct {
 // from a background goroutine - the first time another process claims the
 // seat away from this one.
 func Claim(kind Kind, onLost func()) (*Seat, error) {
-	return claim(Path(), kind, onLost, false)
+	return claim(Path(), kind, onLost)
 }
 
-// ClaimDaemon takes the daemon seat. onStop is called once when the seat
-// is taken by another daemon or its file is removed (StopDaemon) - either
-// way this daemon must exit.
-func ClaimDaemon(onStop func()) (*Seat, error) {
-	return claim(DaemonPath(), Daemon, onStop, true)
-}
-
-// StopDaemon asks the running daemon, if any, to exit by removing its
-// seat; it notices within a heartbeat. A missing seat is not an error.
-func StopDaemon() error {
-	err := os.Remove(DaemonPath())
-	if os.IsNotExist(err) {
-		return nil
-	}
-	return err
-}
-
-func claim(path string, kind Kind, onLost func(), lostWhenRemoved bool) (*Seat, error) {
+func claim(path string, kind Kind, onLost func()) (*Seat, error) {
 	if err := write(path, record{PID: os.Getpid(), Kind: kind, Heartbeat: time.Now()}); err != nil {
 		return nil, err
 	}
 	s := &Seat{path: path, kind: kind, stop: make(chan struct{}), done: make(chan struct{})}
-	go s.run(onLost, lostWhenRemoved)
+	go s.run(onLost)
 	return s, nil
 }
 
-func (s *Seat) run(onLost func(), lostWhenRemoved bool) {
+func (s *Seat) run(onLost func()) {
 	defer close(s.done)
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
@@ -160,7 +134,7 @@ func (s *Seat) run(onLost func(), lostWhenRemoved bool) {
 			return
 		case <-ticker.C:
 			r, ok := read(s.path)
-			if (ok && r.PID != os.Getpid()) || (!ok && lostWhenRemoved) {
+			if ok && r.PID != os.Getpid() {
 				if onLost != nil {
 					onLost()
 				}

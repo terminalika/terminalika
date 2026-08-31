@@ -26,7 +26,6 @@ import (
 // frame so changes (the listener seat moving away, say) show immediately.
 type Status struct {
 	Agents    []agents.Agent
-	Notify    string
 	AutoPause bool
 	Listening bool
 	Webhook   string
@@ -44,7 +43,7 @@ const (
 	cardW       = previewCols + 4
 	cardH       = previewRows + 4
 	titleWord   = "terminalika"
-	tagline     = "AI focus hub · notification listener · retro game library"
+	tagline     = "AI focus hub · retro game launcher"
 )
 
 type mode int
@@ -653,7 +652,7 @@ func (h *Home) drawHero(w, y int) {
 		for _, a := range st.Agents {
 			names = append(names, a.Name)
 		}
-		status = "◉ listening: " + strings.Join(names, ", ") + " · " + st.Notify
+		status = "◉ listening: " + strings.Join(names, ", ")
 		if st.AutoPause {
 			status += " · auto-pause"
 		}

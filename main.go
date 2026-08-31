@@ -12,11 +12,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	core "github.com/terminalika/terminalika-core"
@@ -27,14 +26,12 @@ import (
 	"github.com/terminalika/terminalika/internal/agents"
 	"github.com/terminalika/terminalika/internal/autostart"
 	"github.com/terminalika/terminalika/internal/config"
-	"github.com/terminalika/terminalika/internal/daemon"
 	"github.com/terminalika/terminalika/internal/engine"
 	"github.com/terminalika/terminalika/internal/home"
 	"github.com/terminalika/terminalika/internal/hub"
 	"github.com/terminalika/terminalika/internal/keystate"
 	"github.com/terminalika/terminalika/internal/listener"
 	"github.com/terminalika/terminalika/internal/notice"
-	"github.com/terminalika/terminalika/internal/notify"
 	"github.com/terminalika/terminalika/internal/sidecar"
 	"github.com/terminalika/terminalika/internal/sources"
 	"github.com/terminalika/terminalika/internal/webhook"
@@ -56,7 +53,9 @@ func main() {
 		case "notify":
 			os.Exit(runNotify(os.Args[2:]))
 		case "daemon":
-			os.Exit(runDaemon(os.Args[2:]))
+			// The background process of earlier versions. Its login entry
+			// may still fire; take it down and go.
+			os.Exit(runLegacyDaemon())
 		case "setup":
 			os.Args = append([]string{os.Args[0], "--setup"}, os.Args[2:]...)
 		case "reset":
@@ -120,11 +119,6 @@ func main() {
 	}
 	defer screen.Fini()
 
-	// Track whether this window has the terminal's focus, for the
-	// "desktop notification only when unfocused" mode.
-	focus := newFocusScreen(screen)
-	screen = focus
-
 	if firstRun || *setupFlag {
 		base := cfg
 		if firstRun {
@@ -133,7 +127,6 @@ func main() {
 		saved, ok := wizard.New(screen, base).Run()
 		if ok {
 			cfg = saved
-			applyBackground(cfg)
 		} else if firstRun {
 			// Cancelled on the very first run: play with nothing enabled,
 			// and offer setup again next time.
@@ -143,10 +136,10 @@ func main() {
 
 	ids := resolveAgents(cfg, *agentsFlag, *piFlag, *claudeFlag)
 
-	app := newApp(screen, cfg, ids, focus.Focused)
+	app := newApp(screen, cfg, ids)
 	defer app.close()
 	app.takeWindowSeat()
-	ensureDaemon(cfg)
+	removeLegacyDaemon()
 
 	if *gameFlag != "" {
 		app.runGame(releases, support, registry, *gameFlag, *wsFlag)
@@ -163,113 +156,24 @@ func main() {
 	}
 }
 
-// applyBackground makes the saved Background choice real: register (or
-// unregister) the login entry and start (or stop) the daemon right now, so
-// the choice takes effect without a reboot. A restart also hands a running
-// daemon the new config. Failures are non-fatal - the terminal is in raw
-// mode, so they go to stderr where they'll show after exit.
-func applyBackground(cfg config.Config) {
-	if cfg.Background {
-		if err := autostart.Install(); err != nil {
-			fmt.Fprintf(os.Stderr, "terminalika: could not register autostart: %v\n", err)
-		}
-		if err := daemon.Restart(); err != nil {
-			fmt.Fprintf(os.Stderr, "terminalika: could not start the background process: %v\n", err)
-		}
-		return
-	}
-	if err := autostart.Remove(); err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika: could not remove autostart: %v\n", err)
-	}
-	if err := daemon.Stop(); err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika: could not stop the background process: %v\n", err)
+// removeLegacyDaemon clears what earlier versions left for their background
+// process: the login entry and the daemon's seat and log files. terminalika
+// is a game launcher, not a notification service; nothing runs when no
+// window is open.
+func removeLegacyDaemon() {
+	_ = autostart.Remove()
+	for _, f := range []string{"daemon.json", "daemon.log"} {
+		_ = os.Remove(filepath.Join(sidecar.Dir(), f))
 	}
 }
 
-// ensureDaemon starts the background process if the config wants one and
-// none is running - after a reboot without autostart, or a killed daemon -
-// so the setting is self-healing.
-func ensureDaemon(cfg config.Config) {
-	if cfg.Background && len(cfg.AgentIDs()) > 0 && !daemon.Running() {
-		_ = daemon.Spawn()
-	}
-}
-
-// runDaemon implements `terminalika daemon`: the headless background
-// process (see package daemon). It never touches the terminal; its few
-// log lines go to daemon.log in the config dir.
-func runDaemon(args []string) int {
-	fs := flag.NewFlagSet("terminalika daemon", flag.ContinueOnError)
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: terminalika daemon")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Runs the agent listener in the background, delivering desktop notifications")
-		fmt.Fprintln(os.Stderr, "while no terminalika window is open. Started at login when setup says so.")
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika daemon: %v\n", err)
-		return 1
-	}
-	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "terminalika daemon: %v\n", err)
-		return 1
-	}
-
-	// Checked before the log is opened: a second daemon must not truncate
-	// the running one's log on its way out.
-	if st := listener.CheckDaemon(); st.Held {
-		fmt.Fprintf(os.Stderr, "terminalika daemon: already running (pid %d)\n", st.PID)
-		return 1
-	}
-
-	logf := func(string, ...any) {}
-	if f, err := os.OpenFile(daemon.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
-		defer f.Close()
-		logf = func(format string, args ...any) {
-			fmt.Fprintf(f, time.Now().Format("15:04:05")+" "+format+"\n", args...)
-		}
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := daemon.Run(ctx, cfg, logf); err != nil {
-		logf("%v", err)
-		fmt.Fprintf(os.Stderr, "terminalika daemon: %v\n", err)
-		return 1
-	}
+// runLegacyDaemon answers `terminalika daemon` from a login entry an earlier
+// version registered: remove the entry, say so, exit.
+func runLegacyDaemon() int {
+	removeLegacyDaemon()
+	fmt.Fprintln(os.Stderr, "terminalika: the background process is gone (terminalika is a game launcher, not a notification service); its login entry has been removed")
 	return 0
 }
-
-// focusScreen wraps the terminal screen to remember whether the terminal
-// window has focus, from the focus events every screen loop (wizard, home,
-// engine, dialogs) polls through it - none of them has to know.
-type focusScreen struct {
-	tcell.Screen
-	focused atomic.Bool
-}
-
-func newFocusScreen(s tcell.Screen) *focusScreen {
-	f := &focusScreen{Screen: s}
-	f.focused.Store(true) // the window that was just opened has focus
-	s.EnableFocus()
-	return f
-}
-
-// PollEvent records focus changes and passes every event through.
-func (f *focusScreen) PollEvent() tcell.Event {
-	ev := f.Screen.PollEvent()
-	if fe, ok := ev.(*tcell.EventFocus); ok {
-		f.focused.Store(fe.Focused)
-	}
-	return ev
-}
-
-// Focused reports whether the terminal window currently has focus.
-func (f *focusScreen) Focused() bool { return f.focused.Load() }
 
 // agentIDList lists the catalogue ids for flag help.
 func agentIDList() string {
@@ -313,27 +217,22 @@ func resolveAgents(cfg config.Config, agentsFlag string, pi, claude bool) []agen
 // The hub runs for the whole session - on the home screen, inside a game,
 // and in between - so no agent event is ever missed.
 type app struct {
-	screen   tcell.Screen
-	cfg      config.Config
-	hub      *hub.Hub
-	notifier *notify.Notifier
-	seat     *listener.Seat
-	set      sources.Set
-
-	notifyDone chan struct{}
-	notifyCh   chan agents.Event
+	screen tcell.Screen
+	cfg    config.Config
+	hub    *hub.Hub
+	seat   *listener.Seat
+	set    sources.Set
 
 	// closeRequested is set when another terminalika window took the
 	// listener seat: this window is on its way out (see takeWindowSeat).
 	closeRequested atomic.Bool
 }
 
-func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID, focused func() bool) *app {
+func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID) *app {
 	a := &app{
-		screen:   screen,
-		cfg:      cfg,
-		hub:      hub.New(),
-		notifier: notify.New(cfg.DesktopMode(), focused),
+		screen: screen,
+		cfg:    cfg,
+		hub:    hub.New(),
 	}
 
 	if len(ids) == 0 {
@@ -348,17 +247,6 @@ func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID, focused fun
 		a.hub.Watch(ag)
 	}
 
-	// The notifier is the one subscriber that's always on, whatever screen
-	// is showing.
-	a.notifyCh = a.hub.Subscribe()
-	a.notifyDone = make(chan struct{})
-	go func() {
-		defer close(a.notifyDone)
-		for ev := range a.notifyCh {
-			a.notifier.Notify(ev)
-		}
-	}()
-
 	a.hub.Start()
 	return a
 }
@@ -366,8 +254,8 @@ func newApp(screen tcell.Screen, cfg config.Config, ids []agents.ID, focused fun
 // takeWindowSeat claims the listener seat for this window, always: there is
 // only ever one terminalika window. A window that held it before is told
 // so and closes itself (it sees the takeover on its next heartbeat, see
-// requestClose); the background daemon just goes quiet until this window
-// exits. The player is told when another window was closed for them.
+// requestClose). The player is told when another window was closed for
+// them.
 func (a *app) takeWindowSeat() {
 	closedOther := false
 	if st := listener.Check(); st.Held && st.Kind == listener.Window {
@@ -409,7 +297,6 @@ func (a *app) closing() bool { return a.closeRequested.Load() }
 func (a *app) status() home.Status {
 	st := home.Status{
 		Agents:    a.hub.Agents(),
-		Notify:    a.notifier.Describe(),
 		AutoPause: a.cfg.PauseOnEvent(),
 		Listening: a.hub.Running() && (a.seat == nil || a.seat.Held()),
 	}
@@ -421,11 +308,6 @@ func (a *app) status() home.Status {
 
 func (a *app) close() {
 	a.hub.Stop()
-	if a.notifyCh != nil {
-		a.hub.Unsubscribe(a.notifyCh)
-		close(a.notifyCh)
-		<-a.notifyDone
-	}
 	if a.seat != nil {
 		a.seat.Release()
 	}

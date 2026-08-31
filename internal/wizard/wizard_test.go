@@ -77,7 +77,7 @@ func TestDefaultsSaveWithEnterOnly(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 
-	feed(s, enters(5)...)
+	feed(s, enters(3)...)
 	c, saved := run(t, w)
 	if !saved {
 		t.Fatal("wizard did not save")
@@ -86,8 +86,8 @@ func TestDefaultsSaveWithEnterOnly(t *testing.T) {
 	if len(ids) != 2 || ids[0] != agents.Claude || ids[1] != agents.Pi {
 		t.Errorf("AgentIDs = %v, want [claude pi]", ids)
 	}
-	if c.DesktopMode() != config.DesktopUnfocused || !c.PauseOnEvent() || !c.Background {
-		t.Errorf("config = %+v; want the recommended defaults (unfocused, pause, background)", c)
+	if !c.PauseOnEvent() {
+		t.Errorf("config = %+v; want the recommended default (pause)", c)
 	}
 	if !config.Exists() {
 		t.Error("config file not written")
@@ -106,11 +106,7 @@ func TestTogglesAreRecorded(t *testing.T) {
 	script := []*tcell.EventKey{
 		// Agents: untick Claude (row 0), tick Aider (row 2), tick Cursor (row 3).
 		rn(' '), key(tcell.KeyDown), key(tcell.KeyDown), rn(' '), key(tcell.KeyDown), rn('x'), key(tcell.KeyEnter),
-		// Desktop notifications: pick "Never" (row 3).
-		key(tcell.KeyDown), key(tcell.KeyDown), key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
 		// Auto-pause: choose "No".
-		key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
-		// Background: choose "No".
 		key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter),
 		// Summary: save.
 		key(tcell.KeyEnter),
@@ -125,14 +121,8 @@ func TestTogglesAreRecorded(t *testing.T) {
 	if len(ids) != 3 || ids[0] != agents.Pi || ids[1] != agents.Aider || ids[2] != agents.Cursor {
 		t.Errorf("AgentIDs = %v, want [pi aider cursor]", ids)
 	}
-	if c.DesktopMode() != config.DesktopNever {
-		t.Errorf("Notify = %+v, want never", c.Notify)
-	}
 	if c.PauseOnEvent() {
 		t.Error("PauseOnEvent() = true, want false")
-	}
-	if c.Background {
-		t.Error("Background = true, want false")
 	}
 }
 
@@ -140,35 +130,39 @@ func TestRerunStartsFromCurrentChoices(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
 	s := newSim(t)
 	base := config.Default()
-	base.Notify.Desktop = config.DesktopNoWindow
-	base.Background = false
+	off := false
+	base.AutoPause = &off
 	w := New(s, base)
 
 	// Enter straight through must keep what the file already says.
-	feed(s, enters(5)...)
+	feed(s, enters(3)...)
 	c, saved := run(t, w)
 	if !saved {
 		t.Fatal("wizard did not save")
 	}
-	if c.DesktopMode() != config.DesktopNoWindow || c.Background {
-		t.Errorf("config = %+v; want the base choices kept", c)
+	if c.PauseOnEvent() {
+		t.Errorf("config = %+v; want the base choice (no auto-pause) kept", c)
 	}
 }
 
-func TestNoBellStep(t *testing.T) {
+// terminalika is a game launcher, not a notification service: no step
+// offers a bell, a desktop notification or a background process.
+func TestOnlyAgentsAndAutoPauseAreAsked(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
 	s := newSim(t)
 	w := New(s, config.Default())
-	w.step = stepDesktop
-	w.draw()
-	text := screenText(s)
-	if strings.Contains(strings.ToLower(text), "bell") {
-		t.Errorf("the wizard must not offer a bell:\n%s", text)
-	}
-	for _, want := range []string{"isn't focused (Recommended)", "Always", "no terminalika window is open", "Never"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("%q missing:\n%s", want, text)
+	for st := stepAgents; st < stepCount; st++ {
+		w.step = st
+		w.draw()
+		text := strings.ToLower(screenText(s))
+		for _, banned := range []string{"bell", "desktop notification", "os popup", "background", "login", "daemon"} {
+			if strings.Contains(text, banned) {
+				t.Errorf("step %d offers %q:\n%s", st, banned, text)
+			}
 		}
+	}
+	if stepCount != 3 {
+		t.Errorf("stepCount = %d, want 3 (agents, auto-pause, summary)", stepCount)
 	}
 }
 
@@ -190,7 +184,7 @@ func TestReleaseEventsAreIgnored(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 	// A marked release of Space must not toggle anything back.
-	feed(s, append([]*tcell.EventKey{rn(' '), release(' ')}, enters(5)...)...)
+	feed(s, append([]*tcell.EventKey{rn(' '), release(' ')}, enters(3)...)...)
 	c, _ := run(t, w)
 	if c.HasAgent(agents.Claude) {
 		t.Error("Claude should have been unticked exactly once")
@@ -207,7 +201,7 @@ func TestSmallTerminalKeepsEveryOptionVisible(t *testing.T) {
 		w := New(s, config.Default())
 		w.draw()
 		text := screenText(s)
-		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 1 of 5", "Space toggle"} {
+		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 1 of 3", "Space toggle"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%dx%d: %q missing:\n%s", size[0], size[1], want, text)
 			}

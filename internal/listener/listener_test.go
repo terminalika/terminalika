@@ -21,9 +21,6 @@ func TestCheckUnheld(t *testing.T) {
 	if got := Check(); got.Held {
 		t.Errorf("Check() = %+v, want Held=false", got)
 	}
-	if got := CheckDaemon(); got.Held {
-		t.Errorf("CheckDaemon() = %+v, want Held=false", got)
-	}
 }
 
 func TestCheckIgnoresOwnSeat(t *testing.T) {
@@ -47,12 +44,12 @@ func TestCheckReportsOtherLiveHolderAndKind(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
 
 	other := os.Getpid() + 1
-	if err := write(Path(), record{PID: other, Kind: Daemon, Heartbeat: time.Now()}); err != nil {
+	if err := write(Path(), record{PID: other, Kind: Window, Heartbeat: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	got := Check()
-	if !got.Held || got.PID != other || got.Kind != Daemon {
-		t.Errorf("Check() = %+v, want Held=true PID=%d Kind=daemon", got, other)
+	if !got.Held || got.PID != other || got.Kind != Window {
+		t.Errorf("Check() = %+v, want Held=true PID=%d Kind=window", got, other)
 	}
 
 	// A seat file from before kinds existed is a window's.
@@ -173,37 +170,6 @@ func TestListenerSeatSurvivesMissingFile(t *testing.T) {
 	time.Sleep(5 * heartbeatInterval)
 	if !seat.Held() {
 		t.Fatal("listener seat should have re-written its file")
-	}
-}
-
-func TestDaemonSeatStopsOnRemoval(t *testing.T) {
-	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
-	withFastHeartbeat(t)
-
-	stopped := make(chan struct{})
-	seat, err := ClaimDaemon(func() { close(stopped) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer seat.Release()
-
-	if got := CheckDaemon(); got.Held {
-		t.Errorf("CheckDaemon() = %+v, want Held=false for own seat", got)
-	}
-	if _, err := os.Stat(Path()); err == nil {
-		t.Error("the daemon seat must not touch the listener seat file")
-	}
-
-	if err := StopDaemon(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-stopped:
-	case <-time.After(2 * time.Second):
-		t.Fatal("onStop was not called after StopDaemon removed the seat")
-	}
-	if err := StopDaemon(); err != nil {
-		t.Fatalf("StopDaemon with no daemon: %v", err)
 	}
 }
 
