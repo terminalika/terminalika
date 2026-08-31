@@ -339,10 +339,9 @@ const docsURL = "terminalika.dev"
 // core.KeyStateHandler are affected by a terminal's inability to report key
 // releases - everything else moves one step per keypress and never reads
 // held state, so it's unaffected regardless of the terminal. Keep this in
-// sync with which games implement that interface.
-var heldControlLabel = map[string]string{
-	"pong": "paddles",
-}
+// sync with which games implement that interface - none of the built-in
+// ones do at the moment (pong, which had paddles here, was dropped).
+var heldControlLabel = map[string]string{}
 
 // keyReleaseWarning is shown when the terminal cannot report key releases:
 // holding a key then only produces the terminal's auto-repeat, which makes

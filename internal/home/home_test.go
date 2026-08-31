@@ -70,8 +70,8 @@ func TestDownArrowExploresAndEnterLaunchesSelection(t *testing.T) {
 	h := New(s, games, nil, nil)
 	feed(s, key(tcell.KeyDown), key(tcell.KeyRight), key(tcell.KeyEnter))
 	name, ok := run(t, h)
-	if !ok || name != "pong" {
-		t.Fatalf("Run = %q, %v; want pong (second card)", name, ok)
+	if !ok || name != "invaders" {
+		t.Fatalf("Run = %q, %v; want invaders (second card)", name, ok)
 	}
 }
 

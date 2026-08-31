@@ -538,8 +538,8 @@ type bandGame struct {
 
 func (g *bandGame) OverlayArea() (core.Rect, bool) { return g.band, true }
 
-// TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp reproduces pong's
-// odd-row-count case: its own "PAUSED" band lands one row above h/2, and
+// TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp reproduces a game with
+// an odd row count: its own "PAUSED" band lands one row above h/2, and
 // the notice must follow it there instead of landing on the h/2 guess and
 // leaving both visible.
 func TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp(t *testing.T) {

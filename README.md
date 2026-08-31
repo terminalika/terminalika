@@ -40,7 +40,7 @@ This file is the technical reference for the CLI.
 | `internal/keystate`     | Kitty keyboard protocol / win32-input-mode key releases.                                 |
 | `internal/wsserver`, `internal/sidecar` | Optional WebSocket sidecar and its published address.                     |
 
-The games (Snake, Tetris, Space Invaders, Pong) and the engine contract live
+The games (Snake, Tetris, Space Invaders, Dino) and the engine contract live
 in [`terminalika-core`](https://github.com/terminalika/terminalika-core),
 imported as a normal Go dependency.
 
@@ -99,7 +99,7 @@ Hook and command snippets: [terminalika.dev/events](https://terminalika.dev/even
 terminalika                      # home screen; first run = setup wizard
 terminalika setup                # re-run the wizard (also --setup)
 terminalika reset                # wipe config.json and start over (also --reset / -r)
-terminalika --game=tetris        # skip the home screen (snake, tetris, invaders, pong)
+terminalika --game=tetris        # skip the home screen (snake, tetris, invaders, dino)
 terminalika --agents=claude,aider   # listen to these agents for this run only
 terminalika --ws=""              # disable the WebSocket sidecar (default 127.0.0.1:8080)
 
