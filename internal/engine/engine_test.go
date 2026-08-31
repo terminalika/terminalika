@@ -529,10 +529,19 @@ func TestDrawScreenNoticeCentersOnScreen(t *testing.T) {
 	}
 }
 
+// bandGame is a game that reports where its own PAUSED band is
+// (core.OverlayReporter); the notice must land on it, wherever it says.
+type bandGame struct {
+	core.Game
+	band core.Rect
+}
+
+func (g *bandGame) OverlayArea() (core.Rect, bool) { return g.band, true }
+
 // TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp reproduces pong's
-// odd-row-count case: its own "PAUSED" overlay lands one row above h/2
-// (see rowHasOverlayBackground's doc comment), and the notice must follow
-// it there instead of landing on the h/2 guess and leaving both visible.
+// odd-row-count case: its own "PAUSED" band lands one row above h/2, and
+// the notice must follow it there instead of landing on the h/2 guess and
+// leaving both visible.
 func TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp(t *testing.T) {
 	screen := tcell.NewSimulationScreen("")
 	if err := screen.Init(); err != nil {
@@ -548,7 +557,7 @@ func TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp(t *testing.T) {
 	}
 	screen.Show()
 
-	e := &Engine{screen: screen}
+	e := &Engine{screen: screen, game: &bandGame{band: core.Rect{X: 17, Y: realRow, W: len("PAUSED"), H: 1}}}
 	aqua := noticeStyleForAgent("")
 	e.drawScreenNotice(&screenNotice{lines: []string{"PAUSED"}, style: aqua})
 
@@ -702,7 +711,7 @@ func TestNoticeCoversTheGamesOwnOverlayRow(t *testing.T) {
 	}
 	screen.Show()
 
-	e := &Engine{screen: screen}
+	e := &Engine{screen: screen, game: &bandGame{band: core.Rect{X: x0, Y: 24 / 2, W: len(reason), H: 1}}}
 	claude := noticeStyleForAgent("claude")
 	e.drawScreenNotice(&screenNotice{lines: []string{"[INPUT REQUIRED: Claude Code]", "short", "[SPACE] resume"}, style: claude})
 

@@ -613,26 +613,28 @@ func (e *Engine) expireHeld() {
 	}
 }
 
-// drawScreenNotice overlays n centered on the screen. It's the only thing
-// the engine itself draws outside of the game, so it never has to clear
-// anything first - it simply replaces whatever the game drew at that
-// position for its own pause/game-over overlay. A multi-line notice is
-// drawn as one solid block (every line padded to the widest) so it reads
-// as a single card over the board rather than ragged text.
+// drawScreenNotice overlays n on the game's own pause/game-over band - the
+// game says where it is (core.OverlayReporter) - widened to cover it
+// completely, so the two never show side by side; with no band up it is
+// centered on the screen. It's the only thing the engine itself draws
+// outside of the game, so it never has to clear anything first. A
+// multi-line notice is drawn as one solid block (every line padded to the
+// widest) so it reads as a single card over the board rather than ragged
+// text.
 func (e *Engine) drawScreenNotice(n *screenNotice) {
 	w, h := e.screen.Size()
 	startY := h / 2
-	if !e.rowHasOverlayBackground(startY) && e.rowHasOverlayBackground(startY-1) {
-		startY--
+	left, right := -1, -1
+	if e.game != nil {
+		if band, ok := core.OverlayAreaOf(e.game); ok {
+			startY = band.Y
+			left, right = band.X, band.X+band.W-1
+		}
 	}
 	lines := n.lines
 	if len(lines) > 1 {
 		lines = padBlock(lines)
 	}
-	// The game's own overlay (its reason text, white on dark red) sits on
-	// startY and may be wider than our block; widen the block to cover it
-	// completely so the two never show side by side.
-	left, right := e.overlayExtent(startY)
 	for i, line := range lines {
 		x := w/2 - len([]rune(line))/2
 		if i == 0 || len(lines) > 1 {
@@ -649,24 +651,6 @@ func (e *Engine) drawScreenNotice(n *screenNotice) {
 		}
 	}
 	e.screen.Show()
-}
-
-// overlayExtent returns the first and last column painted ColorDarkRed on
-// row y (the game's own overlay), or -1, -1 when there is none.
-func (e *Engine) overlayExtent(y int) (left, right int) {
-	w, _ := e.screen.Size()
-	left, right = -1, -1
-	for x := 0; x < w; x++ {
-		_, _, style, _ := e.screen.GetContent(x, y)
-		_, bg, _ := style.Decompose()
-		if bg == tcell.ColorDarkRed {
-			if left < 0 {
-				left = x
-			}
-			right = x
-		}
-	}
-	return left, right
 }
 
 // padBlock centers every line inside the width of the widest one, with a
@@ -687,30 +671,6 @@ func padBlock(lines []string) []string {
 		out[i] = strings.Repeat(" ", left) + l + strings.Repeat(" ", right)
 	}
 	return out
-}
-
-// rowHasOverlayBackground reports whether row y has any cell painted with
-// ColorDarkRed, the background every game (and nothing else) uses for its
-// own pause/game-over overlay.
-//
-// drawScreenNotice checks this for at most two rows - h/2 and h/2-1 - which
-// is provably enough: a board with an even row count centers that overlay
-// at exactly h/2 (the two halves of the centering math - (h-boardRows)/2
-// and boardRows/2 - either both keep their remainder or both drop it, so
-// they always recombine to h/2 exactly). A board with an odd row count
-// (pong's 15, currently the only one) drops exactly one remainder when h is
-// even, landing the real row exactly one above h/2 and never anywhere
-// else - so no board size, current or future, needs a third row checked.
-func (e *Engine) rowHasOverlayBackground(y int) bool {
-	w, _ := e.screen.Size()
-	for x := 0; x < w; x++ {
-		_, _, style, _ := e.screen.GetContent(x, y)
-		_, bg, _ := style.Decompose()
-		if bg == tcell.ColorDarkRed {
-			return true
-		}
-	}
-	return false
 }
 
 // dynamicHold turns a measured gap between a held key's auto-repeat presses
