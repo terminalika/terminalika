@@ -247,14 +247,11 @@ on both, clone them side by side and use a Go workspace (local-only, don't
 commit it):
 
 ```sh
-git clone git@github.com:terminalika/terminalika-core.git
-git clone git@github.com:terminalika/terminalika.git
+git clone https://github.com/terminalika/terminalika-core.git
+git clone https://github.com/terminalika/terminalika.git
 go work init ./terminalika ./terminalika-core
 cd terminalika && go build ./... && go test ./...
 ```
-
-For SSH-only fetching: `git config --global url."git@github.com:".insteadOf "https://github.com/"`
-and `go env -w GOPRIVATE=github.com/terminalika/*`.
 
 ## Recent changes
 
