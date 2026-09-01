@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/gorilla/websocket v1.5.3
-	github.com/terminalika/terminalika-core v0.5.1
+	github.com/terminalika/terminalika-core v0.6.0
 	golang.org/x/term v0.37.0
 )
 

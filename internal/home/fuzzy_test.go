@@ -2,7 +2,7 @@ package home
 
 import "testing"
 
-var games = []string{"dino", "invaders", "snake", "tetris"}
+var games = []string{"2048", "mines", "snake", "tetris"}
 
 func TestFuzzySearchRanksPrefixFirst(t *testing.T) {
 	got := fuzzySearch("s", games)
@@ -29,7 +29,7 @@ func TestFuzzySearchNoMatch(t *testing.T) {
 }
 
 func TestFuzzyMatchIsCaseInsensitive(t *testing.T) {
-	if _, ok := fuzzyMatch("DINO", "dino"); !ok {
+	if _, ok := fuzzyMatch("SNAKE", "snake"); !ok {
 		t.Fatal("case-insensitive match expected")
 	}
 }

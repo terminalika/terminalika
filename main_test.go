@@ -144,7 +144,7 @@ func TestPauseCommandCarriesOverlayLineAndAgent(t *testing.T) {
 	}
 
 	pi, _ := agents.Lookup("pi")
-	cmd = pauseCommand("dino", agents.Event{Agent: pi, Kind: agents.Finished, Detail: "PI's out, you're up"})
+	cmd = pauseCommand("2048", agents.Event{Agent: pi, Kind: agents.Finished, Detail: "PI's out, you're up"})
 	_ = json.Unmarshal(cmd.Payload, &p)
 	if len(p.Lines) != 1 || p.Lines[0] != "PI's out, you're up" {
 		t.Errorf("custom message lines = %q", p.Lines)

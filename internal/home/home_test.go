@@ -70,8 +70,8 @@ func TestDownArrowExploresAndEnterLaunchesSelection(t *testing.T) {
 	h := New(s, games, nil, nil)
 	feed(s, key(tcell.KeyDown), key(tcell.KeyRight), key(tcell.KeyEnter))
 	name, ok := run(t, h)
-	if !ok || name != "invaders" {
-		t.Fatalf("Run = %q, %v; want invaders (second card)", name, ok)
+	if !ok || name != "mines" {
+		t.Fatalf("Run = %q, %v; want mines (second card)", name, ok)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestHeroModeHidesLibraryAndShowsPrompt(t *testing.T) {
 	h.draw()
 
 	text := screenText(s)
-	if contains(text, "╭") || contains(text, "invaders") {
+	if contains(text, "╭") || contains(text, "tetris") {
 		t.Error("game cards visible in hero mode")
 	}
 	if !contains(text, "Press [↓] Down Arrow") {
@@ -107,7 +107,7 @@ func TestHeroModeHidesLibraryAndShowsPrompt(t *testing.T) {
 	}
 	h.draw()
 	text = screenText(s)
-	if !contains(text, "╭") || !contains(text, "snake") || !contains(text, "invaders") {
+	if !contains(text, "╭") || !contains(text, "snake") || !contains(text, "tetris") {
 		t.Error("library not revealed in explore mode")
 	}
 }
@@ -218,7 +218,9 @@ func TestSmallTerminalStillRenders(t *testing.T) {
 // laptop screen: the library must still be fully navigable.
 func TestQuarterScreenShowsEveryGame(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
-	for _, size := range [][2]int{{60, 16}, {80, 20}, {50, 10}, {40, 9}} {
+	// The smallest size is the list layout with exactly one row per game:
+	// title, underline, status, the games header, the games, the footer.
+	for _, size := range [][2]int{{60, 16}, {80, 20}, {50, 10}, {40, len(games) + 5}} {
 		s := newSim(t, size[0], size[1])
 		h := New(s, games, nil, nil)
 		h.loadScores()
@@ -242,14 +244,15 @@ func TestQuarterScreenShowsEveryGame(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		h.step()
 	}
-	for i := 0; i < 3; i++ {
+	last := len(games) - 1
+	for i := 0; i < last; i++ {
 		h.handleExploreKey(key(tcell.KeyDown))
 	}
-	if h.sel != 3 {
-		t.Errorf("sel = %d after 3x Down in list layout, want 3", h.sel)
+	if h.sel != last {
+		t.Errorf("sel = %d after %dx Down in list layout, want %d", h.sel, last, last)
 	}
 	h.draw()
-	if !contains(screenText(s), "tetris") {
+	if !contains(screenText(s), games[last]) {
 		t.Errorf("30x8: selected game not scrolled into view:\n%s", screenText(s))
 	}
 }
