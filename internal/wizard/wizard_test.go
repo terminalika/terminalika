@@ -77,7 +77,7 @@ func TestDefaultsSaveWithEnterOnly(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 
-	feed(s, enters(3)...)
+	feed(s, enters(4)...)
 	c, saved := run(t, w)
 	if !saved {
 		t.Fatal("wizard did not save")
@@ -104,6 +104,8 @@ func TestTogglesAreRecorded(t *testing.T) {
 	w := New(s, config.Default())
 
 	script := []*tcell.EventKey{
+		// Mode: keep "watch" (the default with Claude+Pi already enabled).
+		key(tcell.KeyEnter),
 		// Agents: untick Claude (row 0), tick Aider (row 2), tick Cursor (row 3).
 		rn(' '), key(tcell.KeyDown), key(tcell.KeyDown), rn(' '), key(tcell.KeyDown), rn('x'), key(tcell.KeyEnter),
 		// Auto-pause: choose "No".
@@ -135,7 +137,7 @@ func TestRerunStartsFromCurrentChoices(t *testing.T) {
 	w := New(s, base)
 
 	// Enter straight through must keep what the file already says.
-	feed(s, enters(3)...)
+	feed(s, enters(4)...)
 	c, saved := run(t, w)
 	if !saved {
 		t.Fatal("wizard did not save")
@@ -145,13 +147,56 @@ func TestRerunStartsFromCurrentChoices(t *testing.T) {
 	}
 }
 
+// TestJustPlaySkipsAgentsAndPause covers the "just play, no agent
+// tracking" mode: it must jump straight from the mode question to the
+// summary, past the agents and auto-pause questions, and save with no
+// agents enabled - even though the base config (Claude+Pi) has some.
+func TestJustPlaySkipsAgentsAndPause(t *testing.T) {
+	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
+	s := newSim(t)
+	w := New(s, config.Default())
+
+	// Mode: move to "Just play", select it, Enter should land on the
+	// summary directly; Enter again saves.
+	feed(s, key(tcell.KeyDown), rn(' '), key(tcell.KeyEnter), key(tcell.KeyEnter))
+	c, saved := run(t, w)
+	if !saved {
+		t.Fatal("wizard did not save")
+	}
+	if ids := c.AgentIDs(); len(ids) != 0 {
+		t.Errorf("AgentIDs = %v, want none", ids)
+	}
+}
+
+// TestJustPlayBackFromSummaryReturnsToMode covers retreat's mirror of the
+// forward skip: Escape from the summary in "just play" mode must land
+// back on the mode question, not the (skipped) auto-pause one. Drives
+// handleKey directly (no goroutine) since it only needs to inspect
+// w.step mid-flow, not run the wizard to completion.
+func TestJustPlayBackFromSummaryReturnsToMode(t *testing.T) {
+	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
+	s := newSim(t)
+	w := New(s, config.Default())
+
+	w.handleKey(key(tcell.KeyDown))
+	w.handleKey(rn(' '))
+	w.handleKey(key(tcell.KeyEnter))
+	if w.step != stepSummary {
+		t.Fatalf("step = %d, want stepSummary after choosing just-play", w.step)
+	}
+	w.handleKey(key(tcell.KeyEscape))
+	if w.step != stepMode {
+		t.Errorf("step = %d, want stepMode after Escape from the summary in just-play mode", w.step)
+	}
+}
+
 // terminalika is a game launcher, not a notification service: no step
 // offers a bell, a desktop notification or a background process.
 func TestOnlyAgentsAndAutoPauseAreAsked(t *testing.T) {
 	t.Setenv("TERMINALIKA_CONFIG_DIR", t.TempDir())
 	s := newSim(t)
 	w := New(s, config.Default())
-	for st := stepAgents; st < stepCount; st++ {
+	for st := stepMode; st < stepCount; st++ {
 		w.step = st
 		w.draw()
 		text := strings.ToLower(screenText(s))
@@ -161,8 +206,8 @@ func TestOnlyAgentsAndAutoPauseAreAsked(t *testing.T) {
 			}
 		}
 	}
-	if stepCount != 3 {
-		t.Errorf("stepCount = %d, want 3 (agents, auto-pause, summary)", stepCount)
+	if stepCount != 4 {
+		t.Errorf("stepCount = %d, want 4 (mode, agents, auto-pause, summary)", stepCount)
 	}
 }
 
@@ -184,7 +229,7 @@ func TestReleaseEventsAreIgnored(t *testing.T) {
 	s := newSim(t)
 	w := New(s, config.Default())
 	// A marked release of Space must not toggle anything back.
-	feed(s, append([]*tcell.EventKey{rn(' '), release(' ')}, enters(3)...)...)
+	feed(s, append([]*tcell.EventKey{key(tcell.KeyEnter), rn(' '), release(' ')}, enters(3)...)...)
 	c, _ := run(t, w)
 	if c.HasAgent(agents.Claude) {
 		t.Error("Claude should have been unticked exactly once")
@@ -199,9 +244,10 @@ func TestSmallTerminalKeepsEveryOptionVisible(t *testing.T) {
 	for _, size := range [][2]int{{45, 12}, {60, 14}, {40, 10}} {
 		s := newSim(t, size[0], size[1])
 		w := New(s, config.Default())
+		w.step = stepAgents
 		w.draw()
 		text := screenText(s)
-		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 1 of 3", "Space toggle"} {
+		for _, want := range []string{"Claude Code", "Pi Agent", "Aider", "Cursor CLI", "step 2 of 4", "Space toggle"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%dx%d: %q missing:\n%s", size[0], size[1], want, text)
 			}

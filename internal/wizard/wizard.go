@@ -22,7 +22,8 @@ const DocsURL = "terminalika.dev/docs/events"
 type step int
 
 const (
-	stepAgents step = iota
+	stepMode step = iota
+	stepAgents
 	stepPause
 	stepSummary
 	stepCount
@@ -34,6 +35,7 @@ type Wizard struct {
 	base   config.Config
 	step   step
 
+	mode   ui.List
 	agents ui.List
 	pause  ui.List
 
@@ -44,6 +46,17 @@ type Wizard struct {
 // or the current config when re-running setup).
 func New(screen tcell.Screen, base config.Config) *Wizard {
 	w := &Wizard{screen: screen, base: base}
+
+	w.mode.Single = true
+	w.mode.Items = []ui.Item{
+		{Label: "Watch AI agents (Recommended)", Hint: "pause the game and tell you when Claude Code, pi, etc. need you", Value: "watch"},
+		{Label: "Just play — no agent tracking", Hint: "skip agent setup entirely; a plain retro-game launcher", Value: "simple"},
+	}
+	if len(base.AgentIDs()) > 0 {
+		selectValue(&w.mode, "watch")
+	} else {
+		selectValue(&w.mode, "simple")
+	}
 
 	for _, a := range agents.Catalog {
 		w.agents.Items = append(w.agents.Items, ui.Item{
@@ -128,21 +141,21 @@ func (w *Wizard) handleKey(ev *tcell.EventKey) action {
 	case tcell.KeyCtrlC:
 		return actionCancel
 	case tcell.KeyEscape:
-		if w.step == stepAgents {
+		if w.step == stepMode {
 			return actionCancel
 		}
-		w.step--
+		w.retreat()
 		return actionNone
 	case tcell.KeyBackspace, tcell.KeyBackspace2, tcell.KeyLeft:
-		if w.step > stepAgents {
-			w.step--
+		if w.step > stepMode {
+			w.retreat()
 		}
 		return actionNone
 	case tcell.KeyEnter, tcell.KeyRight, tcell.KeyTab:
 		if w.step == stepSummary {
 			return actionSave
 		}
-		w.step++
+		w.advance()
 		return actionNone
 	}
 	if ev.Key() == tcell.KeyRune && ev.Rune() == 'q' && w.step == stepSummary {
@@ -154,8 +167,35 @@ func (w *Wizard) handleKey(ev *tcell.EventKey) action {
 	return actionNone
 }
 
+// simple reports whether "just play, no agent tracking" is the mode
+// step's current choice.
+func (w *Wizard) simple() bool {
+	return first(w.mode.Checked(), "watch") == "simple"
+}
+
+// advance moves to the next step, skipping the agents/auto-pause
+// questions entirely when the player chose to just play.
+func (w *Wizard) advance() {
+	if w.step == stepMode && w.simple() {
+		w.step = stepSummary
+		return
+	}
+	w.step++
+}
+
+// retreat is advance's inverse.
+func (w *Wizard) retreat() {
+	if w.step == stepSummary && w.simple() {
+		w.step = stepMode
+		return
+	}
+	w.step--
+}
+
 func (w *Wizard) current() *ui.List {
 	switch w.step {
+	case stepMode:
+		return &w.mode
 	case stepAgents:
 		return &w.agents
 	case stepPause:
@@ -169,11 +209,18 @@ func (w *Wizard) current() *ui.List {
 // address) survive a re-run.
 func (w *Wizard) result() config.Config {
 	c := w.base
-	var ids []agents.ID
-	for _, v := range w.agents.Checked() {
-		ids = append(ids, agents.ID(v))
+	if w.simple() {
+		// The agents step was skipped; its state may still hold whatever
+		// base pre-filled it with, so don't trust it - simple always
+		// means no agents, full stop.
+		c.SetAgents(nil)
+	} else {
+		var ids []agents.ID
+		for _, v := range w.agents.Checked() {
+			ids = append(ids, agents.ID(v))
+		}
+		c.SetAgents(ids)
 	}
-	c.SetAgents(ids)
 	pause := first(w.pause.Checked(), "yes") == "yes"
 	c.AutoPause = &pause
 	return c
@@ -187,6 +234,7 @@ func first(vals []string, fallback string) string {
 }
 
 var stepTitles = [stepCount]string{
+	"How do you want to use terminalika?",
 	"Which AI agents should terminalika listen to?",
 	"Pause the game automatically when an agent event arrives?",
 	"All set.",
@@ -253,11 +301,17 @@ func (w *Wizard) draw() {
 	ui.Print(s, x, y, ui.StyleText.Bold(true), ui.Truncate(stepTitles[w.step], inner))
 	y += 1 + spacer
 
-	for _, l := range []*ui.List{&w.agents, &w.pause} {
+	for _, l := range []*ui.List{&w.mode, &w.agents, &w.pause} {
 		l.HideHints = compact
 	}
 
 	switch w.step {
+	case stepMode:
+		y += w.mode.Draw(s, x, y, inner)
+		if notes > 0 {
+			y++
+			ui.Print(s, x, y, ui.StyleDim, ui.Truncate("Rerun terminalika --setup any time to change this.", inner))
+		}
 	case stepAgents:
 		y += w.agents.Draw(s, x, y, inner)
 		if notes > 0 {
@@ -307,7 +361,7 @@ func (w *Wizard) draw() {
 
 	hint := "↑/↓ move   Space toggle   Enter next   Esc back"
 	switch w.step {
-	case stepAgents:
+	case stepMode:
 		hint = "↑/↓ move   Space toggle   Enter next   Esc quit"
 	case stepSummary:
 		hint = "Enter save & continue   Esc back   q quit without saving"
