@@ -17,10 +17,11 @@ type ID string
 
 // The agents terminalika knows about.
 const (
-	Claude ID = "claude"
-	Pi     ID = "pi"
-	Aider  ID = "aider"
-	Cursor ID = "cursor"
+	Claude   ID = "claude"
+	Pi       ID = "pi"
+	Aider    ID = "aider"
+	Cursor   ID = "cursor"
+	OpenCode ID = "opencode"
 )
 
 // Agent describes one entry of the catalogue.
@@ -45,6 +46,7 @@ var Catalog = []Agent{
 	{ID: Pi, Name: "Pi Agent", Native: true, Hint: "tails ~/.pi/agent/sessions"},
 	{ID: Aider, Name: "Aider", Native: true, Hint: "tails .aider.chat.history.md; or --notifications-command"},
 	{ID: Cursor, Name: "Cursor CLI", Native: false, Hint: "via hooks -> terminalika notify"},
+	{ID: OpenCode, Name: "OpenCode", Native: false, Hint: "via a plugin -> terminalika notify"},
 }
 
 // Lookup finds an agent by id. Unknown ids yield a synthetic agent named
