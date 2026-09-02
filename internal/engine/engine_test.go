@@ -529,50 +529,6 @@ func TestDrawScreenNoticeCentersOnScreen(t *testing.T) {
 	}
 }
 
-// bandGame is a game that reports where its own PAUSED band is
-// (core.OverlayReporter); the notice must land on it, wherever it says.
-type bandGame struct {
-	core.Game
-	band core.Rect
-}
-
-func (g *bandGame) OverlayArea() (core.Rect, bool) { return g.band, true }
-
-// TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp reproduces a game with
-// an odd row count: its own "PAUSED" band lands one row above h/2, and
-// the notice must follow it there instead of landing on the h/2 guess and
-// leaving both visible.
-func TestDrawScreenNoticeFollowsOddBoardOverlayOneRowUp(t *testing.T) {
-	screen := tcell.NewSimulationScreen("")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen.Init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(40, 40)
-
-	gameStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkRed)
-	realRow := 40/2 - 1
-	for i, r := range "PAUSED" {
-		screen.SetContent(17+i, realRow, r, nil, gameStyle)
-	}
-	screen.Show()
-
-	e := &Engine{screen: screen, game: &bandGame{band: core.Rect{X: 17, Y: realRow, W: len("PAUSED"), H: 1}}}
-	aqua := noticeStyleForAgent("")
-	e.drawScreenNotice(&screenNotice{lines: []string{"PAUSED"}, style: aqua})
-
-	x := 40/2 - len("PAUSED")/2
-	_, _, gotStyle, _ := screen.GetContent(x, realRow)
-	if gotStyle != aqua {
-		t.Fatalf("style at (%d, %d) = %v, want the notice to have followed the game's overlay one row up", x, realRow, gotStyle)
-	}
-	// The h/2 guess itself must be left alone - nothing should leak there.
-	_, _, guessStyle, _ := screen.GetContent(x, 40/2)
-	if guessStyle == aqua {
-		t.Fatalf("notice also drawn at the h/2 guess (%d, %d); it must land on exactly one row", x, 40/2)
-	}
-}
-
 // TestNaturalGameOverSetsAquaNotice checks that a game's own "<name>.game_over"
 // event - fired with no external pause command or agent involved, e.g. the
 // player just lost or won on their own - still shows the same brand-colored
@@ -689,44 +645,5 @@ func TestMultiLineNoticeIsDrawnAsASolidBlock(t *testing.T) {
 	_, _, got, _ := screen.GetContent(x, 20/2+1)
 	if got != style {
 		t.Fatalf("second line not padded to block width at x=%d", x)
-	}
-}
-
-// TestNoticeCoversTheGamesOwnOverlayRow reproduces the "red and orange side
-// by side" glitch: a game paints its long reason text white-on-dark-red on
-// the center row, and a narrower agent block must still cover all of it.
-func TestNoticeCoversTheGamesOwnOverlayRow(t *testing.T) {
-	screen := tcell.NewSimulationScreen("")
-	if err := screen.Init(); err != nil {
-		t.Fatalf("screen.Init: %v", err)
-	}
-	defer screen.Fini()
-	screen.SetSize(80, 24)
-
-	red := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorDarkRed)
-	reason := "Claude Code needs your input! (and some more red text)"
-	x0 := 80/2 - len(reason)/2
-	for i, r := range reason {
-		screen.SetContent(x0+i, 24/2, r, nil, red)
-	}
-	screen.Show()
-
-	e := &Engine{screen: screen, game: &bandGame{band: core.Rect{X: x0, Y: 24 / 2, W: len(reason), H: 1}}}
-	claude := noticeStyleForAgent("claude")
-	e.drawScreenNotice(&screenNotice{lines: []string{"[INPUT REQUIRED: Claude Code]", "short", "[SPACE] resume"}, style: claude})
-
-	for x := 0; x < 80; x++ {
-		_, _, style, _ := screen.GetContent(x, 24/2)
-		_, bg, _ := style.Decompose()
-		if bg == tcell.ColorDarkRed {
-			t.Fatalf("dark red still visible at x=%d on the overlay row", x)
-		}
-	}
-	// And the block is one solid rectangle: every line spans the same columns.
-	for row := 24/2 + 1; row <= 24/2+2; row++ {
-		_, _, style, _ := screen.GetContent(x0, row)
-		if style != claude {
-			t.Fatalf("row %d not widened to the block's left edge", row)
-		}
 	}
 }

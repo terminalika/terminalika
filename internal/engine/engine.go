@@ -325,7 +325,6 @@ func (e *Engine) drawBanner() {
 			e.screen.SetContent(x+2+j, 1+i, r, nil, e.banner.style)
 		}
 	}
-	e.screen.Show()
 }
 
 // Bus returns the engine's event bus.
@@ -392,6 +391,7 @@ func (e *Engine) Run() {
 			e.drawScreenNotice(e.notice)
 		}
 		e.drawBanner()
+		e.screen.Show()
 
 		<-ticker.C
 	}
@@ -613,44 +613,25 @@ func (e *Engine) expireHeld() {
 	}
 }
 
-// drawScreenNotice overlays n on the game's own pause/game-over band - the
-// game says where it is (core.OverlayReporter) - widened to cover it
-// completely, so the two never show side by side; with no band up it is
-// centered on the screen. It's the only thing the engine itself draws
-// outside of the game, so it never has to clear anything first. A
-// multi-line notice is drawn as one solid block (every line padded to the
-// widest) so it reads as a single card over the board rather than ragged
-// text.
+// drawScreenNotice overlays n centered on the screen. Games never paint
+// their own pause/game-over text (see the Game doc comment), so this is the
+// only thing ever shown for those and never has to cover or clear anything
+// else first. A multi-line notice is drawn as one solid block (every line
+// padded to the widest) so it reads as a single card over the board rather
+// than ragged text.
 func (e *Engine) drawScreenNotice(n *screenNotice) {
 	w, h := e.screen.Size()
 	startY := h / 2
-	left, right := -1, -1
-	if e.game != nil {
-		if band, ok := core.OverlayAreaOf(e.game); ok {
-			startY = band.Y
-			left, right = band.X, band.X+band.W-1
-		}
-	}
 	lines := n.lines
 	if len(lines) > 1 {
 		lines = padBlock(lines)
 	}
 	for i, line := range lines {
 		x := w/2 - len([]rune(line))/2
-		if i == 0 || len(lines) > 1 {
-			if left >= 0 && left < x {
-				line = strings.Repeat(" ", x-left) + line
-				x = left
-			}
-			if end := x + len([]rune(line)); right >= 0 && right+1 > end {
-				line += strings.Repeat(" ", right+1-end)
-			}
-		}
 		for j, r := range []rune(line) {
 			e.screen.SetContent(x+j, startY+i, r, nil, n.style)
 		}
 	}
-	e.screen.Show()
 }
 
 // padBlock centers every line inside the width of the widest one, with a
