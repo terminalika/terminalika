@@ -119,6 +119,7 @@ func claim(path string, kind Kind, onLost func()) (*Seat, error) {
 	if err := write(path, record{PID: os.Getpid(), Kind: kind, Heartbeat: time.Now()}); err != nil {
 		return nil, err
 	}
+
 	s := &Seat{path: path, kind: kind, stop: make(chan struct{}), done: make(chan struct{})}
 	go s.run(onLost)
 	return s, nil

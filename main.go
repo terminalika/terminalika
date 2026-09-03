@@ -152,6 +152,7 @@ func main() {
 		if !ok {
 			return
 		}
+
 		app.runGame(releases, support, registry, name, *wsFlag)
 	}
 }

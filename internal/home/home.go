@@ -368,7 +368,7 @@ func (h *Home) step() {
 	// Ease the hero toward its target: a quarter of the remaining distance
 	// per frame reads as a quick, smooth slide (~300 ms).
 	target := h.heroTarget()
-	h.heroShift += (target - h.heroShift) * 0.25
+	h.heroShift += (target - h.heroShift) * 0.4
 	if math.Abs(target-h.heroShift) < 0.005 {
 		h.heroShift = target
 	}
@@ -555,6 +555,7 @@ func (h *Home) draw() {
 	if h.mode == modeSearch {
 		h.drawSearch(w, hh)
 	}
+
 	h.drawToast(w)
 	h.drawBottomBar(w, hh)
 	s.Show()
